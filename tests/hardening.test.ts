@@ -702,16 +702,16 @@ test('local-model tool arguments are repaired only when the complete schema acce
     'read_file',
     { filePath: '/home/user/project/src/World.tsx' },
     z.object({ path: z.string() }),
-    ['World.tsx'],
+    '/home/user/project',
   );
   assert.equal(aliasedPath.repaired, true);
-  assert.deepEqual(aliasedPath.arguments, { path: 'World.tsx' });
+  assert.deepEqual(aliasedPath.arguments, { path: 'src/World.tsx' });
   assert.deepEqual(
     normalizeToolArguments(
       'read_file',
       { path: '/home/user/project/task.ts' },
       z.object({ path: z.string() }),
-      ['task.ts'],
+      '/home/user/project',
     ).arguments,
     { path: 'task.ts' },
   );
@@ -720,7 +720,7 @@ test('local-model tool arguments are repaired only when the complete schema acce
       'replace_text',
       { path: 'task.ts', text: 'before', replacementText: 'after' },
       z.object({ path: z.string(), oldText: z.string(), newText: z.string() }),
-      ['task.ts'],
+      '/home/user/project',
     ).arguments,
     { path: 'task.ts', oldText: 'before', newText: 'after' },
   );

@@ -1,4 +1,10 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["scripts/live-e2e.mts", "scripts/live-support.ts", "src/api.ts"]
+  "include": [
+    "scripts/live-e2e.mts",
+    "scripts/live-support.ts",
+    "scripts/evaluate.mts",
+    "scripts/acceptance.ts",
+    "src/api.ts"
+  ]
 }

@@ -205,16 +205,12 @@ export async function startPackageProcess(root: string, script: string) {
   const pnpm = await resolveExecutable('pnpm');
   const command = manifest.scripts[checked];
   const localViteHost = /^vite(?:\s|$)/.test(command) && !/(?:^|\s)--host(?:\s|=|$)/.test(command);
-  const child = spawn(
-    pnpm,
-    ['run', checked, ...(localViteHost ? ['--host', '127.0.0.1'] : [])],
-    {
-      cwd: root,
-      detached: true,
-      env: executableEnvironment(pnpm, { FORCE_COLOR: '0' }),
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  );
+  const child = spawn(pnpm, ['run', checked, ...(localViteHost ? ['--host', '127.0.0.1'] : [])], {
+    cwd: root,
+    detached: true,
+    env: executableEnvironment(pnpm, { FORCE_COLOR: '0' }),
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   const record: ProcessRecord = {
     id: randomUUID(),
     root,
@@ -242,7 +238,6 @@ export async function startPackageProcess(root: string, script: string) {
     record.output = error.message;
     record.exitCode = null;
   });
-  if (child.pid) record.identity = await processIdentity(child.pid);
   processes.set(record.id, record);
   await persistProcesses();
   const readyDeadline = Date.now() + 5000;
@@ -252,6 +247,10 @@ export async function startPackageProcess(root: string, script: string) {
     if (processView(record).urls.length) break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  // Package-manager launchers can exec or change their title during startup.
+  // Capture identity after readiness so recovery compares the stable process.
+  if (child.pid) record.identity = await processIdentity(child.pid);
+  await persistProcesses();
   await probeProcessHealth(record);
   return processView(record);
 }

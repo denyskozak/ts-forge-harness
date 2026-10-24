@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { ToolCall } from './provider';
 import type { ZodType } from 'zod';
 
@@ -176,7 +177,7 @@ export function normalizeToolArguments(
   name: string,
   args: Record<string, unknown>,
   schema: ZodType,
-  knownPaths: string[] = [],
+  workspaceRoot?: string,
 ): { arguments: Record<string, unknown>; repaired: boolean } {
   const original = schema.safeParse(args);
   const decoded = decodeJsonContainers(args);
@@ -185,44 +186,38 @@ export function normalizeToolArguments(
       ? { arguments: original.data as Record<string, unknown>, repaired: false }
       : { arguments: args, repaired: false };
   const repaired = { ...(decoded as Record<string, unknown>) };
-  if (
-    ['read_file', 'write_file', 'replace_text'].includes(name) &&
-    typeof repaired.path !== 'string' &&
-    typeof repaired.filePath === 'string'
-  ) {
-    const requested = repaired.filePath.replaceAll('\\', '/');
-    const match = knownPaths.find(
-      (filename) => requested === filename || requested.endsWith('/' + filename),
+  // Only convert paths under the actual root. Never infer a destination by basename
+  // or suffix: an outside path may coincidentally name a different workspace file.
+  const relative = (value: unknown): unknown => {
+    if (typeof value !== 'string' || !workspaceRoot || !path.isAbsolute(value)) return value;
+    const candidate = path.relative(path.resolve(workspaceRoot), value);
+    return candidate &&
+      candidate !== '..' &&
+      !candidate.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(candidate)
+      ? candidate
+      : value;
+  };
+  if (['read_file', 'write_file', 'replace_text'].includes(name)) {
+    if (typeof repaired.path !== 'string' && typeof repaired.filePath === 'string') {
+      repaired.path = repaired.filePath;
+      delete repaired.filePath;
+    }
+    repaired.path = relative(repaired.path);
+  }
+  if (['read_files', 'analyze_impact'].includes(name)) {
+    if (!Array.isArray(repaired.paths) && Array.isArray(repaired.filePaths)) {
+      repaired.paths = repaired.filePaths;
+      delete repaired.filePaths;
+    }
+    if (Array.isArray(repaired.paths)) repaired.paths = repaired.paths.map(relative);
+  }
+  if (name === 'apply_changeset' && Array.isArray(repaired.edits))
+    repaired.edits = repaired.edits.map((edit) =>
+      edit && typeof edit === 'object' && !Array.isArray(edit)
+        ? { ...edit, path: relative(edit.path) }
+        : edit,
     );
-    repaired.path = match ?? repaired.filePath;
-    delete repaired.filePath;
-  }
-  if (
-    ['read_file', 'write_file', 'replace_text'].includes(name) &&
-    typeof repaired.path === 'string'
-  ) {
-    const requested = repaired.path.replaceAll('\\', '/');
-    const match = knownPaths.find(
-      (filename) => requested === filename || requested.endsWith('/' + filename),
-    );
-    if (match) repaired.path = match;
-  }
-  if (
-    name === 'read_files' &&
-    !Array.isArray(repaired.paths) &&
-    Array.isArray(repaired.filePaths)
-  ) {
-    repaired.paths = repaired.filePaths.map((value) => {
-      if (typeof value !== 'string') return value;
-      const requested = value.replaceAll('\\', '/');
-      return (
-        knownPaths.find(
-          (filename) => requested === filename || requested.endsWith('/' + filename),
-        ) ?? value
-      );
-    });
-    delete repaired.filePaths;
-  }
   if (name === 'replace_text') {
     if (typeof repaired.oldText !== 'string')
       repaired.oldText = repaired.old_text ?? repaired.search ?? repaired.text;
@@ -239,7 +234,20 @@ export function normalizeToolArguments(
     repaired.project = repaired.tsconfigPath;
     delete repaired.tsconfigPath;
   }
+  if (['typecheck', 'run_validation'].includes(name)) {
+    if (typeof repaired.project === 'string') repaired.project = relative(repaired.project);
+    if (Array.isArray(repaired.files)) repaired.files = repaired.files.map(relative);
+  }
   if (name === 'plan_task') {
+    if (Array.isArray(repaired.requiredChecks))
+      repaired.requiredChecks = repaired.requiredChecks.map((check) => {
+        if (!check || typeof check !== 'object' || Array.isArray(check)) return check;
+        return {
+          ...check,
+          ...(typeof check.project === 'string' ? { project: relative(check.project) } : {}),
+          ...(Array.isArray(check.files) ? { files: check.files.map(relative) } : {}),
+        };
+      });
     for (const key of ['constraints', 'outOfScope', 'criteria']) {
       const values = repaired[key];
       if (Array.isArray(values))

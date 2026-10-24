@@ -43,7 +43,9 @@ export function validateWebUrl(value: string, domains: string[]) {
   return url;
 }
 export function pageText(html: string) {
-  return html
+  // Prefer article content to repeated navigation, while keeping plain-page fallback.
+  const content = html.match(/<main\b[^>]*>([\s\S]*?)<\/main\s*>/i)?.[1] ?? html;
+  return content
     .replace(/<(script|style|noscript|iframe|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
     .replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/<[^>]*>/g, ' ')

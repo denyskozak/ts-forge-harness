@@ -785,7 +785,9 @@ export default function App() {
                           : approval.kind === 'changeset'
                             ? 'Apply changeset'
                             : approval.kind === 'web_search'
-                              ? 'Search web'
+                              ? approval.title.startsWith('Read web page ')
+                                ? 'Read page'
+                                : 'Search web'
                               : approval.kind === 'scaffold'
                                 ? 'Create project'
                                 : approval.kind === 'git'

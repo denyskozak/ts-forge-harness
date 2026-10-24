@@ -254,15 +254,45 @@ export function presentToolResult(message: Message): Presentation {
         count(value.frameworks) !== undefined ? `${count(value.frameworks)} frameworks` : '',
       ].filter(Boolean),
     };
-  if (['search_local_knowledge', 'web_search', 'web_read', 'contribution_guide'].includes(name))
+  if (name === 'web_search' || name === 'web_read') {
+    const results = Array.isArray(value.results) ? value.results : [];
+    const sources = unique([
+      asText(value.url) ?? '',
+      ...results.map((item) =>
+        item && typeof item === 'object' ? (asText((item as Data).url) ?? '') : '',
+      ),
+    ]).filter((url) => {
+      try {
+        const parsed = new URL(url);
+        return parsed.protocol === 'https:' && !parsed.username && !parsed.password;
+      } catch {
+        return false;
+      }
+    });
+    const empty = name === 'web_search' && results.length === 0;
     return {
       ...base,
       title:
         name === 'web_read'
           ? 'Web page read'
-          : name === 'web_search'
-            ? 'Web research complete'
-            : 'Project guidance found',
+          : empty
+            ? 'No web results found'
+            : 'Web research complete',
+      summary: name === 'web_read' ? sources[0] : asText(value.query),
+      tone: empty ? 'warning' : 'success',
+      icon: <Search size={15} />,
+      urls: sources,
+      metrics:
+        name === 'web_search'
+          ? [`${results.length} sources`]
+          : [value.truncated === true ? 'Excerpt · page truncated' : 'Page text extracted'],
+      log: undefined,
+    };
+  }
+  if (['search_local_knowledge', 'contribution_guide'].includes(name))
+    return {
+      ...base,
+      title: 'Project guidance found',
       summary: asText(value.query),
       tone: 'success',
       icon: <Search size={15} />,

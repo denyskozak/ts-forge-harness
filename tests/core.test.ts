@@ -471,9 +471,7 @@ test('Russian build slang routes an empty R3F feature through the complete game 
       calls === 1
         ? {
             content: '',
-            tool_calls: [
-              { function: { name: 'create_r3f_game', arguments: { recipe: 'snake' } } },
-            ],
+            tool_calls: [{ function: { name: 'create_r3f_game', arguments: { recipe: 'snake' } } }],
           }
         : { content: 'The requested project changes were declined.' };
     res.end(`${JSON.stringify({ message, done: true })}\n`);
@@ -499,7 +497,7 @@ test('Russian build slang routes an empty R3F feature through the complete game 
   assert.equal(calls, 2);
   assert.equal(approvals.length, 1);
   assert.equal(approvals[0].kind, 'changeset');
-  assert.match(approvals[0].title, /complete R3F snake game/i);
+  assert.match(approvals[0].title, /complete R3F (?:snake )?game/i);
   assert.equal(store.value.sessions[0].task?.outcome, 'failed');
   assert.equal(store.value.sessions[0].checkpoint?.resumable, true);
   assert.match(store.value.sessions[0].messages.at(-1)!.content, /no changes were applied/i);

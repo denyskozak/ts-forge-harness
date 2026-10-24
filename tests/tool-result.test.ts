@@ -199,3 +199,34 @@ test('architecture outlook shows a compact summary without raw evidence', () => 
   assert.deepEqual(view.metrics, ['1 review areas', '300 files inspected', 'Partial scan']);
   assert.doesNotMatch(JSON.stringify(view), /internal.ts|"evidence"/);
 });
+
+test('web cards expose source URLs and truncation without raw page text', () => {
+  const view = presentToolResult(
+    tool(
+      'web_read',
+      JSON.stringify({
+        url: 'https://react.dev/learn',
+        content: 'PRIVATE_RAW_PAGE',
+        truncated: true,
+        trust: 'untrusted-external-content',
+      }),
+    ),
+  );
+  assert.equal(view.summary, 'https://react.dev/learn');
+  assert.deepEqual(view.urls, ['https://react.dev/learn']);
+  assert.match(view.metrics.join(' '), /truncated/);
+  assert.doesNotMatch(JSON.stringify(view), /PRIVATE_RAW_PAGE/);
+  const empty = presentToolResult(
+    tool('web_search', JSON.stringify({ query: 'React', results: [] })),
+  );
+  assert.equal(empty.tone, 'warning');
+  const search = presentToolResult(
+    tool(
+      'web_search',
+      JSON.stringify({
+        results: [{ url: 'https://react.dev/learn' }, { url: 'javascript:alert(1)' }],
+      }),
+    ),
+  );
+  assert.deepEqual(search.urls, ['https://react.dev/learn']);
+});

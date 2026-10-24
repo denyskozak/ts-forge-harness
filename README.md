@@ -428,3 +428,24 @@ alternatives, verification and a trigger for revisiting them. This iteration doe
 automatically migrate architecture, run penetration tests or certify security.
 
 Threat-modeling guidance follows the [OWASP threat modeling workflow](https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html).
+
+### Live web research regression
+
+With Ollama running and `llama3.1:8b` installed, run `npm run test:web-live`.
+Override the model with `FORGE_E2E_MODEL`. This exercises real inference, DuckDuckGo
+search and reading React documentation through Electron IPC in a temporary workspace.
+The test clicks approvals only for web requests; it rejects other operation types.
+It checks tool receipts, chat rendering and renderer errors, saving screenshots and
+a report under `.forge-test-results/`. It requires internet access and fails when the
+model or provider is unavailable; it never substitutes mocked results.
+
+### Reviewed R3F video poker recipe
+
+`create_r3f_game({ recipe: "poker" })` proposes a reviewed changeset containing a
+single-player Jacks or Better table, pure TypeScript rules and 15 rules/state tests.
+It uses practice credits, local canvas card textures and keyboard-accessible hold
+buttons. The same edit approval, fingerprint and validation gates apply. This is a
+deterministic starter supplied by the harness; it is not evidence that a small local
+model can reliably implement arbitrary games from scratch.
+
+Eval policy, independent acceptance checks and remaining quality gaps: [Evals and code quality](docs/evals-and-quality.md).

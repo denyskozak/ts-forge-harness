@@ -351,3 +351,205 @@ test('harness rejects an unloaded tool and advertises it only after a capability
   assert.match(receipts[0].content, /Tool is not loaded/);
   assert.match(receipts[1].content, /node --test/);
 });
+
+test('negated snake references do not select the snake recipe', async () => {
+  const { requestsSnakeRecipe } = await import('../electron/agent');
+  assert.equal(requestsSnakeRecipe('Create poker. No snake game.'), false);
+  assert.equal(requestsSnakeRecipe('Сделай покер, не делай змейку'), false);
+  assert.equal(requestsSnakeRecipe('Build an R3F snake game'), true);
+});
+
+for (const recovery of ['path', 'fragment'] as const)
+  test(`invalid ${recovery} arguments recover without terminating the run`, async (t) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'forge-invalid-edit-'));
+    const root = path.join(directory, 'project');
+    await fs.mkdir(root);
+    await fs.writeFile(path.join(root, 'index.ts'), 'export const greeting = "before";');
+    await fs.writeFile(
+      path.join(root, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { noEmit: true }, files: ['index.ts'] }),
+    );
+    const calls = [
+      {
+        name: 'plan_task',
+        arguments: {
+          goal: 'Update greeting',
+          criteria: ['Greeting is after'],
+          requiredChecks: [{ recipe: 'typescript.check', project: 'tsconfig.json', files: [] }],
+        },
+      },
+      { name: 'read_file', arguments: { path: 'index.ts' } },
+      recovery === 'path'
+        ? {
+            name: 'apply_changeset',
+            arguments: {
+              rationale: 'Update greeting',
+              edits: [{ path: '/outside.ts', content: 'bad' }],
+            },
+          }
+        : {
+            name: 'replace_text',
+            arguments: { path: 'index.ts', oldText: 'missing fragment', newText: 'after' },
+          },
+      recovery === 'path'
+        ? {
+            name: 'replace_text',
+            arguments: { path: 'index.ts', oldText: '"before"', newText: '"after"' },
+          }
+        : {
+            name: 'write_file',
+            arguments: { path: 'index.ts', content: 'export const greeting = "after";' },
+          },
+      { name: 'typecheck', arguments: {} },
+    ];
+    let index = 0;
+    let recoverySchema: unknown;
+    let initialSchema: unknown;
+    let recoveryInstructions = '';
+    const server = createServer(async (req, res) => {
+      if (req.url === '/api/tags') return res.end('{"models":[{"name":"local","size":1}]}');
+      if (req.url === '/api/show') return res.end('{"capabilities":["tools"]}');
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      if (index === 0) initialSchema = JSON.parse(body).format;
+      if (index === 3) {
+        recoverySchema = JSON.parse(body).format;
+        recoveryInstructions = JSON.parse(body).messages.at(-1).content;
+      }
+      const call = calls[index++];
+      res.end(
+        JSON.stringify({
+          message: call
+            ? { content: '', tool_calls: [{ function: call }] }
+            : { content: 'Updated greeting.' },
+          done: true,
+        }) + '\n',
+      );
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const store = new Store(path.join(directory, 'state'));
+    await store.load();
+    t.after(async () => {
+      server.closeAllConnections();
+      server.close();
+      await store.close();
+      await fs.rm(directory, { recursive: true, force: true });
+    });
+    store.value.workspacePath = root;
+    store.value.settings = {
+      ...store.value.settings,
+      endpoint: `http://127.0.0.1:${(server.address() as { port: number }).port}`,
+      model: 'local',
+      mapFormat: 'compact',
+      maxSteps: 8,
+    };
+    const agent = new Agent(store, (event) => {
+      if (event.type === 'approval') queueMicrotask(() => agent.approve(event.approval.id, true));
+    });
+    await agent.run('Change the greeting to after in index.ts.');
+    assert.match(
+      store.value.sessions[0].messages.find(
+        (m) => m.name === (recovery === 'path' ? 'apply_changeset' : 'replace_text'),
+      )?.content ?? '',
+      /Tool error:/,
+    );
+    assert.match(await fs.readFile(path.join(root, 'index.ts'), 'utf8'), /after/);
+    assert.match(JSON.stringify(initialSchema), /plan_task/);
+    assert.doesNotMatch(JSON.stringify(initialSchema), /apply_changeset/);
+    assert.match(
+      JSON.stringify(recoverySchema),
+      recovery === 'path' ? /replace_text/ : /write_file/,
+    );
+    assert.match(recoveryInstructions, /oldText must be copied exactly/);
+    assert.match(recoveryInstructions, /Change the greeting to after in index.ts/);
+    assert.match(JSON.stringify(recoverySchema), /"enum":\["index.ts"\]/);
+    assert.equal(
+      store.value.sessions[0].task?.criteria[0].description,
+      'Change the greeting to after in index.ts.',
+    );
+  });
+
+test('poker recipe contains executable rules tests and does not retain snake UI', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'forge-poker-recipe-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const { r3fPokerRecipe } = await import('../electron/r3f-poker-recipe');
+  const edits = await r3fPokerRecipe(root);
+  for (const edit of edits) {
+    await fs.mkdir(path.dirname(path.join(root, edit.path)), { recursive: true });
+    await fs.writeFile(path.join(root, edit.path), edit.content);
+  }
+  const { execFileSync } = await import('node:child_process');
+  const output = execFileSync(
+    process.execPath,
+    ['--experimental-strip-types', '--test', '--test-reporter=tap', 'tests/game.test.ts'],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: Object.fromEntries(
+        Object.entries(process.env).filter(([key]) => key !== 'NODE_TEST_CONTEXT'),
+      ),
+    },
+  );
+  assert.match(output, /# fail 0/);
+  assert.match(edits.find((e) => e.path === 'src/App.tsx')!.content, /MIDNIGHT DRAW/);
+  assert.doesNotMatch(edits.find((e) => e.path === 'src/App.tsx')!.content, /Snake/);
+});
+
+test(
+  'repeated invalid tool arguments ask for direction and never report success',
+  { timeout: 15000 },
+  async (t) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'forge-repeat-'));
+    const root = path.join(directory, 'project');
+    await fs.mkdir(root);
+    await fs.writeFile(path.join(root, 'task.ts'), 'export const value = 1;');
+    const server = createServer(async (incoming, response) => {
+      if (incoming.url === '/api/tags')
+        return response.end('{"models":[{"name":"local","size":1}]}');
+      if (incoming.url === '/api/show') return response.end('{}');
+      for await (const chunk of incoming) void chunk;
+      response.end(
+        JSON.stringify({
+          message: {
+            content: '',
+            tool_calls: [{ function: { name: 'plan_task', arguments: {} } }],
+          },
+          done: true,
+        }) + '\n',
+      );
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const store = new Store(path.join(directory, 'state'));
+    await store.load();
+    store.value.workspacePath = root;
+    store.value.settings = {
+      ...store.value.settings,
+      endpoint: `http://127.0.0.1:${(server.address() as { port: number }).port}`,
+      model: 'local',
+      contextTokens: 32768,
+      mapFormat: 'compact',
+    };
+    let questions = 0;
+    const agent = new Agent(store, (event) => {
+      if (event.type === 'clarification') {
+        questions++;
+        assert.equal(event.clarification.options.length, 3);
+        assert.match(event.clarification.reason, /not making progress/);
+        queueMicrotask(() => agent.answerClarification(event.clarification.id, 'stop'));
+      }
+    });
+    t.after(async () => {
+      agent.stop();
+      server.closeAllConnections();
+      server.close();
+      await store.close();
+      await fs.rm(directory, { recursive: true, force: true });
+    });
+    await agent.run('Fix the value in task.ts.');
+    assert.equal(questions, 1);
+    assert.equal(store.value.sessions[0].task?.outcome, 'stopped');
+    assert.equal(store.value.sessions[0].messages.filter((m) => m.role === 'tool').length, 3);
+  },
+);

@@ -3,10 +3,11 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import ts from 'typescript';
+import { verifyFixture } from './acceptance';
+import { evalMetrics, type Intervention } from '../shared/eval-metrics';
+import { execFileSync } from 'node:child_process';
 import { Store } from '../electron/store';
 import { Agent } from '../electron/agent';
-import { execute } from '../electron/executor';
 import { models } from '../electron/provider';
 const endpoint = process.env.FORGE_EVAL_ENDPOINT ?? 'http://127.0.0.1:11434';
 const model = process.env.FORGE_EVAL_MODEL ?? 'qwen2.5:1.5b';
@@ -28,17 +29,29 @@ const cases = [
   },
 ];
 const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'forge-eval-'));
-const results: object[] = [];
+const results: { passed: boolean; [key: string]: unknown }[] = [];
+let modelDigest = '';
+let preflightError = '';
+const revision = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+const dirty = Boolean(execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim());
 try {
   const info = (await models(endpoint)).find((item) => item.name === model);
   assert.ok(info, 'Install the chosen model before evaluation.');
+  modelDigest = info.digest ?? 'unavailable';
   for (const fixture of cases) {
     const directory = path.join(temp, fixture.id),
       project = path.join(directory, 'project'),
       output = path.join(directory, 'check');
     await fs.mkdir(project, { recursive: true });
-    await fs.mkdir(output);
+
     await fs.writeFile(path.join(project, 'task.ts'), fixture.source);
+    await fs.writeFile(
+      path.join(project, 'tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: { strict: true, target: 'ES2022', noEmit: true },
+        include: ['task.ts'],
+      }),
+    );
     const store = new Store(path.join(directory, 'state'));
     await store.load();
     store.value.workspacePath = project;
@@ -49,55 +62,78 @@ try {
       mapFormat: 'compact',
       temperature: 0,
       maxSteps: 8,
-      contextTokens: 8192,
+      contextTokens: 32768,
     };
     let approvals = 0;
+    let timedOut = false;
+    let needsInput = false;
+    const interventions: Intervention[] = [];
     const errors: string[] = [];
     const start = Date.now();
     const agent = new Agent(store, (event) => {
       if (event.type === 'approval') {
         approvals++;
-        agent.approve(event.approval.id, event.approval.kind === 'write');
+        agent.approve(
+          event.approval.id,
+          ['write', 'changeset', 'typecheck', 'validation'].includes(event.approval.kind),
+        );
+      }
+      if (event.type === 'clarification') {
+        needsInput = true;
+        interventions.push({
+          kind: 'clarification',
+          actor: 'runner',
+          at: Date.now(),
+          reason: 'Stopped without supplying a task-solving answer',
+        });
+        queueMicrotask(() => agent.stop());
       }
       if (event.type === 'error') errors.push(event.error);
     });
-    const timeout = setTimeout(() => agent.stop(), 180000);
-    await agent.run(fixture.prompt);
-    clearTimeout(timeout);
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      agent.stop();
+    }, 180000);
+    try {
+      await agent.run(fixture.prompt);
+    } catch (error) {
+      errors.push(String(error));
+    } finally {
+      clearTimeout(timeout);
+    }
     let passed = false,
       validation = '';
     try {
       const source = await fs.readFile(path.join(project, 'task.ts'), 'utf8');
       assert.notEqual(source, fixture.source, 'No edit applied');
-      const code = ts.transpile(source, {
-        target: ts.ScriptTarget.ES2022,
-        module: ts.ModuleKind.CommonJS,
-      });
-      const check = path.join(output, 'assertions.cjs');
-      await fs.writeFile(
-        check,
-        code +
-          '\nconst assert=require("node:assert/strict");\n' +
-          fixture.checks +
-          '\nconsole.log("FORGE_ASSERTIONS_PASSED");',
-      );
-      validation = await execute(
-        process.execPath,
-        [check],
-        output,
-        AbortSignal.timeout(10000),
-        [output, path.dirname(process.execPath)],
-        [],
-      );
-      assert.match(validation, /Exit code: 0/);
-      assert.match(validation, /FORGE_ASSERTIONS_PASSED/);
+      validation = JSON.stringify(await verifyFixture(project, output, fixture.checks));
       passed = true;
     } catch (error) {
       validation = String(error);
     }
+    const taskOutcome = store.value.sessions[0]?.task?.outcome;
+    const delivered =
+      taskOutcome === 'completed_verified' || taskOutcome === 'completed_unverified';
+    const autonomousPass = passed && delivered && !timedOut && !needsInput && !errors.length;
     results.push({
       id: fixture.id,
-      passed,
+      passed: autonomousPass,
+      falseVerifiedCompletion: taskOutcome === 'completed_verified' && !passed,
+      acceptancePassed: passed,
+      status: timedOut
+        ? 'timeout'
+        : needsInput
+          ? 'needs_input'
+          : autonomousPass
+            ? 'passed'
+            : 'failed',
+      taskOutcome,
+      metrics: evalMetrics(
+        store.value.sessions[0]?.messages ?? [],
+        interventions,
+        approvals,
+        Date.now() - start,
+      ),
       durationMs: Date.now() - start,
       approvals,
       errors,
@@ -116,24 +152,38 @@ try {
       })),
     });
     await store.close();
-    console.log(`${passed ? 'PASS' : 'FAIL'} ${fixture.id}`);
+    console.log(`${results.at(-1)?.passed ? 'PASS' : 'FAIL'} ${fixture.id}`);
   }
+} catch (error) {
+  preflightError = String(error);
+  process.exitCode = 1;
+} finally {
   const report = {
-    modelDigest: info.digest,
+    revision,
+    dirty,
+    preflightError,
+    modelDigest,
     createdAt: new Date().toISOString(),
     harness: '0.2.0',
     model,
     endpoint,
     platform: `${process.platform}/${process.arch}`,
     node: process.version,
-    settings: { temperature: 0, contextTokens: 8192, maxSteps: 8 },
+    settings: { temperature: 0, contextTokens: 32768, maxSteps: 8 },
+    status: preflightError
+      ? 'unavailable'
+      : results.every((result) => result.passed)
+        ? 'passed'
+        : 'failed',
     scope: 'Two temporary TypeScript fixtures; not a React/Next quality benchmark.',
     results,
   };
-  const destination = path.resolve(process.env.FORGE_EVAL_REPORT ?? 'docs/local-evaluation.json');
+  const destination = path.resolve(
+    process.env.FORGE_EVAL_REPORT ?? '.forge-test-results/evaluation.json',
+  );
+  await fs.mkdir(path.dirname(destination), { recursive: true });
   await fs.writeFile(destination, JSON.stringify(report, null, 2) + '\n');
   console.log(destination);
-  if (results.some((r) => !(r as { passed: boolean }).passed)) process.exitCode = 1;
-} finally {
+  if (results.some((r) => !r.passed)) process.exitCode = 1;
   await fs.rm(temp, { recursive: true, force: true });
 }

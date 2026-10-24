@@ -1,3 +1,5 @@
+import { completionEvidence } from './completion-evidence';
+export { checkKey } from './check-identity';
 import { z } from 'zod';
 export const recipeSchema = z.enum([
   'typescript.check',
@@ -93,21 +95,7 @@ export const changeSetSchema = z.object({
   createdAt: z.number(),
 });
 export type ChangeSet = z.infer<typeof changeSetSchema>;
-export function checkKey(check: ValidationCheck) {
-  return JSON.stringify([check.recipe, check.project, [...check.files].sort()]);
-}
-/** Only receipts from the exact current snapshot and explicit human acceptance count. */
+/** Human acceptance and fresh executable checks are both required. */
 export function taskOutcome(task: TaskRecord): TaskRecord['outcome'] {
-  if (!task.appliedChanges) return 'completed_unverified';
-  const passed =
-    task.requiredChecks.length > 0 &&
-    task.requiredChecks.every((check) => {
-      const latest = task.validations.findLast((result) => checkKey(result) === checkKey(check));
-      return latest?.status === 'passed' && latest.fingerprint === task.fingerprint;
-    });
-  return passed &&
-    task.criteria.length > 0 &&
-    task.criteria.every((c) => c.acceptedFingerprint === task.fingerprint)
-    ? 'completed_verified'
-    : 'completed_unverified';
+  return completionEvidence(task).verified ? 'completed_verified' : 'completed_unverified';
 }
