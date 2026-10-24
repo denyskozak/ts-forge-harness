@@ -17,11 +17,15 @@ export async function discoverValidationPlan(root: string, signal: AbortSignal) 
   const has = (name: string) => Boolean(packages[name]);
   const checks: { check: ValidationCheck; confidence: 'ready' | 'needs-config'; reason: string }[] =
     [];
-  if (files.files.some((file) => /(^|\/)tsconfig(?:\.[^/]+)?\.json$/.test(file)))
+  const configs = files.files
+    .filter((file) => /(^|\/)tsconfig(?:\.[^/]+)?\.json$/.test(file))
+    .sort();
+  for (const project of configs.slice(0, 40))
     checks.push({
-      check: { recipe: 'typescript.check', project: 'tsconfig.json', files: [] },
-      confidence: 'ready',
-      reason: 'tsconfig detected',
+      check: { recipe: 'typescript.check', project, files: [] },
+      confidence: 'needs-config',
+      reason:
+        'Configuration detected. Inspect references, includes and framework compiler requirements before selecting this check.',
     });
   if (has('vitest') || has('jest') || has('tsx'))
     checks.push({
@@ -69,6 +73,7 @@ export async function discoverValidationPlan(root: string, signal: AbortSignal) 
         : 'Playwright is installed; add or select a UI spec',
     });
   return {
+    complete: files.complete && configs.length <= 40,
     scripts: Object.keys(manifest.scripts ?? {}).sort(),
     detectedPackages: [
       'next',
@@ -81,6 +86,6 @@ export async function discoverValidationPlan(root: string, signal: AbortSignal) 
     ].filter(has),
     checks,
     uiSpecs: specs.slice(0, 40),
-    note: 'Recommendations use only installed local tools. Choose checks before editing so the task contract remains stable.',
+    note: 'Package declarations do not prove executables are installed. Inspect tool availability and target package before choosing checks. TypeScript alone does not validate framework templates or runtime behavior.',
   };
 }

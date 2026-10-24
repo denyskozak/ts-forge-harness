@@ -1,4 +1,9 @@
 import {
+  SECURITY_ARCHITECTURE_SKILLS,
+  type SecurityArchitectureSkillId,
+} from './security-architecture-skills';
+import { PLATFORM_SKILLS, type PlatformSkillId } from './platform-profiles';
+import {
   REQUIRED_MCP_SKILLS,
   MCP_WORKFLOW_INSTRUCTIONS,
   MCP_SECURITY_INSTRUCTIONS,
@@ -23,6 +28,10 @@ import type { TaskCheckpoint } from './checkpoint';
 import { MAINTENANCE_SKILLS, type MaintenanceSkillId } from './maintenance-skills';
 import { QUALITY_SKILLS, type QualitySkillId } from './quality-skills';
 import { DESIGN_SKILLS, type DesignSkillId } from './design-skills';
+import {
+  BACKEND_INFRASTRUCTURE_SKILLS,
+  type BackendInfrastructureSkillId,
+} from './backend-infrastructure-skills';
 import type { McpProfile, McpConnection } from './mcp';
 export type Page = 'agent' | 'build' | 'models' | 'skills' | 'training' | 'settings';
 export type SkillId =
@@ -37,8 +46,11 @@ export type SkillId =
   | 'mcp-workflow'
   | 'mcp-security'
   | 'ssh'
+  | SecurityArchitectureSkillId
+  | PlatformSkillId
   | QualitySkillId
   | DesignSkillId
+  | BackendInfrastructureSkillId
   | MaintenanceSkillId
   | (typeof REQUIRED_ENGINEERING_SKILLS)[number];
 export interface SshProfile {
@@ -279,6 +291,7 @@ export interface ForgeAPI {
   removeWorkspace(path: string): Promise<Workspace | null>;
   readFile(path: string): Promise<string>;
   run(prompt: string, sessionId?: string): Promise<void>;
+  suggestNextStep(sessionId: string): Promise<string | null>;
   resume(sessionId: string): Promise<void>;
   previewImage(path: string): Promise<string>;
   showBrowser(): Promise<void>;
@@ -444,7 +457,7 @@ export const DEFAULT_SETTINGS: Settings = {
   speechLanguage: 'auto',
   rag: { enabled: true, embeddingModel: '', documentationPaths: [] },
   webSearch: {
-    enabled: false,
+    enabled: true,
     allowedDomains: ['react.dev', 'nextjs.org', 'www.typescriptlang.org', 'r3f.docs.pmnd.rs'],
   },
   sshProfiles: [],
@@ -458,8 +471,11 @@ export const SKILLS: {
   tags: string[];
   required?: boolean;
 }[] = [
+  ...SECURITY_ARCHITECTURE_SKILLS.map((skill) => ({ ...skill, tags: [...skill.tags] })),
+  ...PLATFORM_SKILLS,
   ...QUALITY_SKILLS.map((skill) => ({ ...skill, tags: [...skill.tags] })),
   ...DESIGN_SKILLS.map((skill) => ({ ...skill, tags: [...skill.tags] })),
+  ...BACKEND_INFRASTRUCTURE_SKILLS.map((skill) => ({ ...skill, tags: [...skill.tags] })),
   ...MAINTENANCE_SKILLS.map((skill) => ({ ...skill, tags: [...skill.tags] })),
   {
     id: 'problem-solving',

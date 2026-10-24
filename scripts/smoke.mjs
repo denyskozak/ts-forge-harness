@@ -49,8 +49,19 @@ const server = createServer(async (req, res) => {
   if (req.url === '/api/tags')
     return res.end('{"models":[{"name":"fixture:local","size":1024,"capabilities":["tools"]}]}');
   if (req.url === '/api/show') return res.end('{"capabilities":["tools"]}');
-  if (!body.tools)
-    return res.end(JSON.stringify({ message: { content: 'OK' }, done: true }) + '\n');
+  if (!body.tools) {
+    const nextStep = body.messages?.some((message) =>
+      message.content?.includes('Suggest exactly one useful next instruction'),
+    );
+    return res.end(
+      JSON.stringify({
+        message: {
+          content: nextStep ? 'Проверь следующий пользовательский сценарий в браузере.' : 'OK',
+        },
+        done: true,
+      }) + '\n',
+    );
+  }
   if (browserStep >= 0) {
     const calls = [
       { name: 'browser_open', arguments: { url: browserUrl } },
@@ -414,9 +425,17 @@ try {
   await page
     .getByRole('textbox', { name: 'Message Forge' })
     .fill('Inspect the local browser preview and verify its controls.');
-  await page.getByRole('button', { name: 'Send message' }).click();
+  await page.getByRole('button', { name: 'Run task' }).click();
   await page.getByRole('button', { name: 'Open browser', exact: true }).click();
   await page.getByRole('button', { name: 'Stop agent' }).waitFor({ state: 'hidden' });
+  const composer = page.getByRole('textbox', { name: 'Message Forge' });
+  await expect(composer).toHaveAttribute(
+    'placeholder',
+    'Проверь следующий пользовательский сценарий в браузере.',
+  );
+  await composer.press('Tab');
+  await expect(composer).toHaveValue('Проверь следующий пользовательский сценарий в браузере.');
+  await composer.fill('');
   const browserState = await page.evaluate(() => window.forge.state());
   const browserMessages = browserState.sessions.find(
     (session) => session.id === browserState.activeRun.sessionId,
@@ -475,7 +494,7 @@ try {
   await page.screenshot({ path: 'docs/forge-workspaces.png' });
   await page.getByRole('button', { name: 'fixture Local project' }).click();
   await page.getByRole('textbox', { name: 'Message Forge' }).fill('Change world to forge.');
-  await page.getByRole('button', { name: 'Send message' }).click();
+  await page.getByRole('button', { name: 'Run task' }).click();
   await page
     .getByRole('group', { name: 'Forge question' })
     .waitFor()
@@ -529,7 +548,7 @@ try {
   await page
     .getByRole('textbox', { name: 'Message Forge' })
     .fill('Extract greeting into a new feature module and preserve hello.');
-  await page.getByRole('button', { name: 'Send message' }).click();
+  await page.getByRole('button', { name: 'Run task' }).click();
   await page.getByRole('button', { name: 'Apply changeset', exact: true }).waitFor();
   await page.getByRole('region', { name: 'Impact preview' }).last().waitFor();
   assert.equal(await readFile(path.join(project, 'index.ts'), 'utf8'), original);

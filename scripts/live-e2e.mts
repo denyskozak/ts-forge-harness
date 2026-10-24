@@ -198,7 +198,7 @@ try {
         // Rehydrate the UI after opening through the real IPC boundary (native picker alone is stubbed).
         await page.reload();
         await page.getByRole('textbox', { name: 'Message Forge' }).fill(prompt);
-        await page.getByRole('button', { name: 'Send message' }).click();
+        await page.getByRole('button', { name: 'Run task' }).click();
         const deadline = Date.now() + scenarioTimeout;
         let started = false;
         const handled = new Set<string>();

@@ -38,10 +38,12 @@ import {
 import { analyzeProductArchitecture, createDisposableSqlite } from './product-analysis';
 import { listFiles, readText } from './workspace';
 import type { AgentEvent, ProjectMap, Workspace } from '../shared/types';
+import { suggestNextStep } from './next-step';
 let window: BrowserWindow;
 let store: Store;
 let agent: Agent;
 let trainer: Trainer;
+let nextStepController: AbortController | undefined;
 protocol.registerSchemesAsPrivileged([
   { scheme: 'forge', privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ]);
@@ -504,10 +506,40 @@ app
     handle('run', (prompt, id) => {
       if (maintenance || trainer.isRunning)
         throw new Error('Stop training before running inference.');
+      nextStepController?.abort();
       return agent.run(
         z.string().trim().min(1).max(16000).parse(prompt),
         z.string().optional().parse(id),
       );
+    });
+    handle('suggest-next-step', async (id) => {
+      if (maintenance || trainer.isRunning || agent.busy) return null;
+      const sessionId = z.string().uuid().parse(id);
+      const completed = store.value.sessions.find((session) => session.id === sessionId);
+      if (!completed || completed.workspace !== store.value.workspacePath) return null;
+      if (
+        completed.task &&
+        !['completed_verified', 'completed_unverified', 'analysis_only'].includes(
+          completed.task.outcome,
+        )
+      )
+        return null;
+      nextStepController?.abort();
+      const controller = new AbortController();
+      nextStepController = controller;
+      try {
+        return await suggestNextStep(
+          store.value.settings,
+          completed,
+          path.basename(completed.workspace),
+          AbortSignal.any([controller.signal, AbortSignal.timeout(45000)]),
+        );
+      } catch (error) {
+        if (controller.signal.aborted || (error as Error).name === 'AbortError') return null;
+        return null;
+      } finally {
+        if (nextStepController === controller) nextStepController = undefined;
+      }
     });
     handle('stop', () => agent.stop());
     handle('resume', (id) => {

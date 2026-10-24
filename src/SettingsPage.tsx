@@ -364,7 +364,7 @@ export default function SettingsPage({
       </div>
       <div className="settings-card">
         <h3>
-          <ShieldCheck size={17} /> Optional web search
+          <ShieldCheck size={17} /> Web research
         </h3>
         <label className="settings-check">
           <input
@@ -374,7 +374,7 @@ export default function SettingsPage({
               update({ webSearch: { ...draft.webSearch, enabled: e.target.checked } })
             }
           />
-          Allow approved web searches
+          Allow approved web searches and page reading
         </label>
         <label style={{ marginTop: 20 }}>
           Allowed documentation domains
@@ -396,7 +396,8 @@ export default function SettingsPage({
           />
           <small>
             Queries go to DuckDuckGo only after you approve the exact query. Forge returns HTTPS
-            results limited to these domains and never fetches result pages.
+            results limited to these domains. Reading a page requires approval and uses the same
+            domain restrictions.
           </small>
         </label>
       </div>

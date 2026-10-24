@@ -784,6 +784,30 @@ small {
 .composer > textarea::placeholder {
   color: #87868b;
 }
+.composer.has-suggestion > textarea::placeholder {
+  color: #a5a5a5;
+  opacity: 0.58;
+}
+.next-step-keyboard-hint {
+  animation: suggestion-reveal 180ms ease-out;
+  color: #9a9a9a !important;
+}
+.next-step-keyboard-hint kbd {
+  min-width: 30px;
+  color: #d4d4d4;
+  border-color: #4b4b4b;
+  background: #252525;
+}
+@keyframes suggestion-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 .composer-bottom {
   display: flex;
   align-items: center;

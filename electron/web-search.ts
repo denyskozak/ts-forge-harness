@@ -5,7 +5,14 @@ const MAX_RESPONSE_BYTES = 750_000;
 
 export function allowedHost(hostname: string, domains: string[]) {
   const host = hostname.toLowerCase().replace(/\.$/, '');
-  return domains.some((domain) => host === domain || host.endsWith(`.${domain}`));
+  return domains.some((value) => {
+    const domain = value.toLowerCase().replace(/\.$/, '');
+    return (
+      domain.includes('.') &&
+      /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(domain) &&
+      (host === domain || host.endsWith(`.${domain}`))
+    );
+  });
 }
 function decodeResultUrl(value: string) {
   try {
@@ -43,13 +50,13 @@ export async function webSearch(
     },
     body: new URLSearchParams({ q: query }).toString(),
     redirect: 'error',
-    signal,
+    signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
   });
   if (!response.ok) throw new Error(`Search provider returned ${response.status}.`);
   const length = Number(response.headers.get('content-length') ?? 0);
   if (length > MAX_RESPONSE_BYTES)
     throw new Error('Search provider response exceeded the size limit.');
-  const html = (await response.text()).slice(0, MAX_RESPONSE_BYTES);
+  const html = await boundedResponseText(response, MAX_RESPONSE_BYTES);
   const matches = [
     ...html.matchAll(
       /<a[^>]+class="[^" ]*result__a[^" ]*"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]{0,2500}?<a[^>]+class="[^" ]*result__snippet[^" ]*"[^>]*>([\s\S]*?)<\/a>/g,
@@ -61,7 +68,13 @@ export async function webSearch(
       if (!url) return undefined;
       try {
         const parsed = new URL(url);
-        if (parsed.protocol !== 'https:' || !allowedHost(parsed.hostname, domains))
+        if (
+          parsed.protocol !== 'https:' ||
+          parsed.username ||
+          parsed.password ||
+          (parsed.port && parsed.port !== '443') ||
+          !allowedHost(parsed.hostname, domains)
+        )
           return undefined;
         return {
           title: clean(match[2]).slice(0, 300),
@@ -101,3 +114,25 @@ export const webSearchInput = z.object({
     .max(4)
     .optional(),
 });
+
+export async function boundedResponseText(response: Response, limit: number) {
+  const reader = response.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > limit) {
+        await reader.cancel();
+        throw new Error('Response exceeded the size limit.');
+      }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks).toString('utf8');
+  } finally {
+    reader.releaseLock();
+  }
+}

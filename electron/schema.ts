@@ -1,3 +1,5 @@
+import { SECURITY_ARCHITECTURE_SKILLS } from '../shared/security-architecture-skills';
+import { PLATFORM_SKILLS } from '../shared/platform-profiles';
 import { REQUIRED_MCP_SKILLS } from '../shared/mcp-skills';
 import { REQUIRED_ENGINEERING_SKILLS } from '../shared/engineering-skills';
 import { z } from 'zod';
@@ -10,6 +12,7 @@ import { checkpointSchema } from '../shared/checkpoint';
 import { MAINTENANCE_SKILLS } from '../shared/maintenance-skills';
 import { QUALITY_SKILLS } from '../shared/quality-skills';
 import { DESIGN_SKILLS } from '../shared/design-skills';
+import { BACKEND_INFRASTRUCTURE_SKILLS } from '../shared/backend-infrastructure-skills';
 export const settingsSchema = z.object({
   endpoint: z.string().transform(localEndpoint),
   model: z.string().max(200),
@@ -27,8 +30,11 @@ export const settingsSchema = z.object({
         'mcp-workflow',
         'mcp-security',
         'ssh',
+        ...SECURITY_ARCHITECTURE_SKILLS.map((skill) => skill.id),
+        ...PLATFORM_SKILLS.map((skill) => skill.id),
         ...QUALITY_SKILLS.map((skill) => skill.id),
         ...DESIGN_SKILLS.map((skill) => skill.id),
+        ...BACKEND_INFRASTRUCTURE_SKILLS.map((skill) => skill.id),
         ...MAINTENANCE_SKILLS.map((skill) => skill.id),
         ...REQUIRED_ENGINEERING_SKILLS,
       ]),
@@ -52,7 +58,7 @@ export const settingsSchema = z.object({
     .default(DEFAULT_SETTINGS.rag),
   webSearch: z
     .object({
-      enabled: z.boolean().default(false),
+      enabled: z.boolean().default(true),
       allowedDomains: z
         .array(
           z

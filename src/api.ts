@@ -35,6 +35,7 @@ export const api: ForgeAPI = window.forge ?? {
   removeWorkspace: native,
   readFile: native,
   run: native,
+  suggestNextStep: native,
   resume: native,
   previewImage: native,
   showBrowser: native,

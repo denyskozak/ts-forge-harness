@@ -18,6 +18,8 @@ export const TOOL_GROUPS = {
     'replace_text',
     'typescript_query',
     'typecheck',
+    'platform_capabilities',
+    'architecture_outlook',
     'discover_validation_plan',
     'enable_tool_group',
     'skill_instructions',
@@ -73,7 +75,7 @@ export const TOOL_GROUPS = {
     'git_push',
     'contribution_guide',
   ],
-  knowledge: ['search_local_knowledge', 'web_search'],
+  knowledge: ['search_local_knowledge', 'web_search', 'web_read'],
   native: ['inspect_native_project'],
   scene: ['inspect_scene', 'create_r3f_game', 'r3f_runtime_snapshot', 'r3f_performance_profile'],
   ssh: ['ssh_profiles', 'ssh_test_connection', 'ssh_list_directory', 'ssh_upload_files'],
@@ -158,7 +160,10 @@ export function enableToolGroup(groups: Set<ToolGroup>, group: ToolGroup, enable
 export function allowedToolNames(groups: Iterable<ToolGroup>, webEnabled = false) {
   const names = new Set<string>();
   for (const group of groups) TOOL_GROUPS[group]?.forEach((name) => names.add(name));
-  if (!webEnabled) names.delete('web_search');
+  if (!webEnabled) {
+    names.delete('web_search');
+    names.delete('web_read');
+  }
   return names;
 }
 export const TOOL_SELECTION_INSTRUCTIONS = `Only currently relevant capabilities are advertised. Use enable_tool_group to load a missing capability for a concrete next action. Available groups: development (scaffold, packages, processes), browser (interactions and assertions), data (contracts, disposable DB, migrations), git, knowledge (local docs and opt-in web), native, scene (R3F), maintenance (debugging, dependency/security audit, semantic refactoring, release checks), ssh, mcp. Tool availability never grants permission to execute an action. Loading a large group replaces the previous optional group; core and small framework inspections remain. Only call tools advertised on this pass. Switch groups as the task moves between implementation, data, preview and delivery.`;

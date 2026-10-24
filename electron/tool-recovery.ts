@@ -14,6 +14,8 @@ const SAFE_TEXT_RECOVERY_TOOLS = new Set([
   'contribution_guide',
   'typescript_query',
   'search_local_knowledge',
+  'platform_capabilities',
+  'architecture_outlook',
   'discover_validation_plan',
   'inspect_native_project',
   'product_architecture',

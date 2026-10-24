@@ -21,6 +21,7 @@ const api: ForgeAPI = {
   removeWorkspace: (path) => ipcRenderer.invoke('remove-workspace', path),
   readFile: (path) => ipcRenderer.invoke('read-file', path),
   run: (prompt, sessionId) => ipcRenderer.invoke('run', prompt, sessionId),
+  suggestNextStep: (sessionId) => ipcRenderer.invoke('suggest-next-step', sessionId),
   resume: (sessionId) => ipcRenderer.invoke('resume', sessionId),
   previewImage: (path) => ipcRenderer.invoke('preview-image', path),
   showBrowser: () => ipcRenderer.invoke('show-browser'),

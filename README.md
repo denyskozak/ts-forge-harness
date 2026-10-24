@@ -35,6 +35,7 @@ It builds a compact mental model of each workspace before a task, gives the mode
 | **Reviewed changes**        | Uses exact source replacements, visible diffs, explicit approval, atomic writes, checkpoints, and guarded undo.                 |
 | **Multiple workspaces**     | Saves local projects, switches between them, and refreshes analysis when a workspace opens.                                     |
 | **Voice drafts**            | Performs on-device speech recognition, shows a live waveform, and inserts the transcript without sending it.                    |
+| **Next-step suggestions**   | Uses the selected local model to propose one contextual follow-up; Tab copies it into the composer without sending it.          |
 | **Training lab**            | Builds reviewed datasets and launches experimental MLX LoRA jobs in a separate local workspace.                                 |
 | **SSH delivery**            | Tests saved SSH profiles, inspects remote directories, and uploads reviewed workspace files after explicit approval.            |
 | **Project creation**        | Scaffolds pnpm-first React, Next.js, Expo, R3F, Hono API and T3 projects in an empty workspace after approval.                  |
@@ -114,13 +115,13 @@ Forge has three separate knowledge paths:
 
 - **Project RAG** indexes allowed workspace source in bounded chunks and returns file/offset citations through `search_local_knowledge`.
 - **Documentation RAG** indexes only documentation directories selected in Settings. It never scans arbitrary folders or sends those files to a remote service.
-- **Web search** is disabled by default. When enabled, each exact query and its configured domain allowlist require a separate approval before leaving the device. Forge sends the query to DuckDuckGo HTML search, returns HTTPS results from allowed domains, and does not fetch result pages.
+- **Web search and page reading** are enabled by default for new settings; an existing explicit opt-out is preserved. When enabled, each exact query and its configured domain allowlist require a separate approval before leaving the device. Forge sends the query to DuckDuckGo HTML search, returns HTTPS results from allowed domains, and offers `web_read` to read an approved result page.
 
 Project and documentation RAG use local lexical ranking by default. Configure an installed Ollama embedding model such as `nomic-embed-text` to add local vector similarity; embedding batches go only to the existing loopback Ollama endpoint. If embeddings are unavailable, Forge reports the fallback and keeps retrieval local.
 
 Indexes are bounded to 800 chunks and 12 MB per root. Ignored paths, secrets, symlinks and unreadable files remain excluded under the normal workspace policy. Search excerpts are evidence, not authority: the agent must read original project files before editing and cite web URLs when it relies on search results.
 
-Web results and snippets are untrusted external content. The model cannot add domains itself, make arbitrary fetches, bypass the approval, or claim a web search occurred when it was disabled or declined. This is deliberately a search-only capability; a future page-reader needs its own allowlist, size limits, sanitization and approval design.
+Web results and snippets are untrusted external content. The model cannot add domains itself, make arbitrary fetches, bypass the approval, or claim a web search occurred when it was disabled or declined. The page reader permits only allowlisted HTTPS hosts and public IPv4 destinations, pins the validated IP for the TLS request, rejects redirects and non-text/compressed responses, and limits time, download size and model context. It sends no cookies or credentials and executes no page scripts. IPv6-only sites are currently unsupported. Page content remains untrusted: text extraction does not guarantee protection against prompt injection, so existing tool permissions remain in force.
 
 ## SSH servers and file delivery
 
@@ -166,6 +167,50 @@ SQLite targets are fresh owned databases under ignored `.forge/databases`. `data
 `run_seed_workflow` runs an existing seed script against a copied SQLite target in a network-denied project snapshot, without original `.env` files. Only a successful run updates the disposable database. Production URLs are never inferred or used. Package-script seeds currently support SQLite; PostgreSQL fixtures can be supplied as reviewed SQL. Executable/connection-changing SQL is rejected. Isolated runners require macOS and fail closed elsewhere.
 
 Git status, diff and recent history are read-only. Branch creation, explicit file staging, commit and push each require approval. Forge does not expose force push, broad `git add .`, destructive reset or arbitrary shell commands.
+
+## Backend and infrastructure specialization
+
+Backend tasks automatically receive focused guidance for typed API contracts, authorization boundaries, ORM-backed persistence and modular service design. Architecture guidance favors cohesive business modules, explicit application services and infrastructure adapters over premature services or generic layers. tRPC projects add router, context, middleware, Zod, authorization and client-cache rules. GraphQL projects add schema evolution, resolver boundaries, request-scoped data loaders, query-cost controls and generated-contract checks. Queue, worker and webhook work also activates retry, idempotency, outbox, deduplication and recovery rules. Observability tasks cover structured redacted logs, bounded metrics, tracing and separate readiness and liveness signals.
+
+Terraform and HCL work activates dedicated IaC and infrastructure-security skills. They cover provider constraints, cohesive modules, protected remote state, least-privilege IAM, private networking, secret handling and review of replacement, deletion, public-exposure and cost changes in plans. Forge may author reviewed files, but it must not run `apply`, `destroy`, state mutation or import without explicit authorization for a named environment.
+
+## Harness coverage and next iteration
+
+The harness currently combines reviewed file changes, checkpoints, local TypeScript tools,
+isolated validation, browser interaction and focused capability groups. These mechanisms
+reduce model mistakes, but framework instructions alone cannot guarantee delivery.
+
+The first portability iteration adds `platform_capabilities`: a bounded, read-only inventory
+of root and nested package manifests, declared framework versions, script names and verification
+limits. It respects workspace exclusions and reports malformed manifests and incomplete scans.
+Every agent run receives this evidence automatically. Platform runbooks are discoverable in
+Skills and loaded on demand to limit context use. They cover Vue/Nuxt, Angular, Svelte,
+web interaction, React Native/Expo, Three.js/R3F, PixiJS, Node services and Electron/Tauri.
+Dependency evidence describes the declared stack; it does not prove an executable is installed.
+
+Validation discovery now returns the actual TypeScript configuration paths, including nested
+projects, instead of inventing a root `tsconfig.json`. These are candidates requiring inspection:
+a solution config may contain only references, and framework templates require their own checks.
+
+| Gap found in the implementation                                                   | Next harness work                                                                                    | Acceptance evidence                                                                 |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Validation and process recipes mostly assume the repository root                  | Add explicit package-directory execution and workspace dependency resolution                         | Same edit/test workflow succeeds in standalone and pnpm workspace fixtures          |
+| TypeScript diagnostics do not cover framework templates                           | Add installed Vue, Angular and Svelte compiler recipes behind the existing sandbox                   | Deliberately broken templates fail; corrected fixtures pass                         |
+| Source understanding is strongest for TS/JS and React                             | Add SFC/template indexing and cross-file references without treating regex matches as semantic proof | Navigation and impact fixtures for Vue, Angular and Svelte                          |
+| Browser checks cannot establish native correctness                                | Add simulator/device adapters and explicit unavailable states                                        | Verified navigation, permissions and lifecycle scenarios on each supported platform |
+| R3F tools and bundled snake recipe are narrower than general graphics development | Add native Three.js/Pixi scene diagnostics and repeatable input/teardown scenarios                   | Runtime interaction and resource-lifecycle regressions are detected                 |
+| Small-model recovery relies on prompt heuristics and tool-call repairs            | Build a fixed task suite with persisted-file, behavior and completion oracles                        | Compare success, invalid calls, retries and false completion across models          |
+| Security skills describe rules but do not establish enforcement in generated apps | Add API denial-path and tenant-isolation fixtures                                                    | Anonymous, cross-user and invalid requests are rejected by the running service      |
+| Broad skill selection can consume a small model context                           | Route full runbooks by target package and current phase                                              | Record context size and task success before promoting a routing change              |
+
+Start with package-aware execution and framework compiler recipes, then the cross-stack task
+suite. Keep scaffolding, semantic analysis, compilation, runtime checks and deployment as separate
+capabilities with separate receipts. New profile guidance is not a claim of complete framework
+support. Native Swift/Kotlin/Rust development remains outside current TypeScript tool coverage.
+
+Reference boundaries: [Vue requires vue-tsc for SFC type checks](https://vuejs.org/guide/typescript/overview),
+[Angular builds use its configured builders](https://angular.dev/tools/cli/build), and
+[Three.js resource cleanup requires explicit ownership and disposal](https://threejs.org/manual/pages/cleanup.html).
 
 ## Roadmap
 
@@ -360,3 +405,26 @@ See the [training plan](docs/training-plan.md) for the current workflow and open
 ## License
 
 TS Forge is available under the [MIT License](LICENSE). Model weights and datasets keep their own licenses.
+
+### Security and architecture evolution
+
+Five additional runbooks cover threat modeling, resource/tenant authorization,
+untrusted I/O, secrets and abuse resistance, and incremental architecture evolution.
+Security and architecture requests activate the relevant guidance automatically;
+all five can also be enabled in Skills.
+
+The local `architecture_outlook` tool scans up to 300 source files, respecting workspace
+exclusions. It returns file/line evidence for identity, external I/O and persistence
+review areas, with conditional growth triggers, small next steps and suggested tests.
+It reports partial coverage explicitly and never includes source snippets or secret
+values in its report. Lexical matches can include comments and tests: they are leads
+for source review, **not verified vulnerabilities or predictions of future demand**.
+
+The agent uses existing context first. When a decision materially changes the design,
+it can ask one question with three choices and a custom answer through the existing
+question UI. Routine work should continue without speculative architecture questions.
+Accepted decisions belong in the project's architecture documentation, including
+alternatives, verification and a trigger for revisiting them. This iteration does not
+automatically migrate architecture, run penetration tests or certify security.
+
+Threat-modeling guidance follows the [OWASP threat modeling workflow](https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html).

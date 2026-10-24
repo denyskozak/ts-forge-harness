@@ -75,9 +75,25 @@ const skillGlyph = (id: (typeof SKILLS)[number]['id']) =>
               ? 'DIFF'
               : id === 'contributing'
                 ? 'PR'
-                : id.startsWith('mcp-')
-                  ? 'MCP'
-                  : 'N';
+                : id === 'terraform-iac'
+                  ? 'TF'
+                  : id === 'api-contracts'
+                    ? 'API'
+                    : id === 'backend-architecture'
+                      ? 'ARC'
+                      : id === 'trpc-patterns'
+                        ? 'RPC'
+                        : id === 'graphql-patterns'
+                          ? 'GQL'
+                          : id === 'service-resilience'
+                            ? 'JOB'
+                            : id === 'backend-observability'
+                              ? 'OBS'
+                              : id === 'infrastructure-security'
+                                ? 'SEC'
+                                : id.startsWith('mcp-')
+                                  ? 'MCP'
+                                  : 'N';
 const initial: AppState = {
   settings: DEFAULT_SETTINGS,
   workspace: null,
@@ -110,6 +126,7 @@ export default function App() {
     toolCount,
   } = runView;
   const [prompt, setPrompt] = useState('');
+  const [nextStepSuggestion, setNextStepSuggestion] = useState('');
   const [customAnswer, setCustomAnswer] = useState('');
   const [customAnswerOpen, setCustomAnswerOpen] = useState(false);
   const [answerPending, setAnswerPending] = useState(false);
@@ -131,7 +148,8 @@ export default function App() {
   const [analyzing, setAnalyzing] = useState(false);
   const [workspaceMenu, setWorkspaceMenu] = useState(false);
   const endRef = useRef<HTMLDivElement>(null),
-    promptRef = useRef<HTMLTextAreaElement>(null);
+    promptRef = useRef<HTMLTextAreaElement>(null),
+    nextStepRequestRef = useRef(0);
   useEffect(() => {
     if (!clarification) return;
     const Audio =
@@ -221,6 +239,7 @@ export default function App() {
         sessions: [event.session, ...old.sessions.filter((s) => s.id !== event.session.id)],
       }));
       void api.state().then(setState).catch(notify);
+      requestNextStep(event.session);
     }
     if (event.type === 'training') {
       setTraining(event.running);
@@ -336,12 +355,14 @@ export default function App() {
     }
   }
   function newSession() {
+    dismissNextStep();
     dispatchRun({ type: 'select' });
     setPrompt('');
     setPage('agent');
   }
   function loadSession(session: Session) {
     if (busy) return;
+    dismissNextStep();
     dispatchRun({ type: 'select', session });
     setPage('agent');
   }
@@ -357,6 +378,7 @@ export default function App() {
       return;
     }
     const input = prompt;
+    dismissNextStep();
     setPrompt('');
     dispatchRun({ type: 'start' });
     try {
@@ -366,6 +388,34 @@ export default function App() {
       setPrompt(input);
       notify(e);
     }
+  }
+  function dismissNextStep() {
+    nextStepRequestRef.current += 1;
+    setNextStepSuggestion('');
+  }
+  function requestNextStep(session: Session) {
+    const requestId = ++nextStepRequestRef.current;
+    setNextStepSuggestion('');
+    if (!state.settings.model) return;
+    void api
+      .suggestNextStep(session.id)
+      .then((suggestion) => {
+        if (nextStepRequestRef.current === requestId && suggestion) {
+          setNextStepSuggestion(suggestion);
+        }
+      })
+      .catch(() => {});
+  }
+  function acceptNextStep() {
+    if (!nextStepSuggestion || prompt) return;
+    const suggestion = nextStepSuggestion;
+    nextStepRequestRef.current += 1;
+    setNextStepSuggestion('');
+    setPrompt(suggestion);
+    requestAnimationFrame(() => {
+      promptRef.current?.focus();
+      promptRef.current?.setSelectionRange(suggestion.length, suggestion.length);
+    });
   }
   async function approve(allow: boolean) {
     if (!approval) return;
@@ -497,9 +547,7 @@ export default function App() {
             >
               <item.icon size={18} />
               <span>{item.label}</span>
-              {item.id === 'training' ? (
-                <span className="nav-new">LAB</span>
-              ) : null}
+              {item.id === 'training' ? <span className="nav-new">LAB</span> : null}
             </button>
           ))}
         </nav>
@@ -632,6 +680,7 @@ export default function App() {
                           busy={busy}
                           onResume={() => {
                             if (!sessionId || busy) return;
+                            dismissNextStep();
                             dispatchRun({ type: 'start' });
                             void api.resume(sessionId).catch((error) => {
                               dispatchRun({ type: 'start-failed' });
@@ -754,19 +803,32 @@ export default function App() {
                       </button>
                     </div>
                   )}
-                  <div className={`composer ${busy ? 'is-busy' : ''}`}>
+                  <div
+                    className={`composer ${busy ? 'is-busy' : ''} ${nextStepSuggestion && !prompt ? 'has-suggestion' : ''}`}
+                  >
                     <textarea
                       ref={promptRef}
                       value={prompt}
-                      onChange={(e) => setPrompt(e.target.value)}
+                      onChange={(e) => {
+                        dismissNextStep();
+                        setPrompt(e.target.value);
+                      }}
                       onKeyDown={(e) => {
+                        if (e.key === 'Tab' && nextStepSuggestion && !prompt) {
+                          e.preventDefault();
+                          acceptNextStep();
+                          return;
+                        }
                         if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                           e.preventDefault();
                           void run();
                         }
                       }}
-                      placeholder="What would you like to build?"
+                      placeholder={nextStepSuggestion || 'What would you like to build?'}
                       aria-label="Message Forge"
+                      aria-describedby={
+                        nextStepSuggestion && !prompt ? 'next-step-keyboard-hint' : undefined
+                      }
                       rows={2}
                     />
                     <div className="composer-bottom">
@@ -783,6 +845,7 @@ export default function App() {
                           }}
                           onError={setToast}
                           onTranscript={(text) => {
+                            dismissNextStep();
                             setPrompt((current) =>
                               current.trim() ? `${current.trimEnd()} ${text}` : text,
                             );
@@ -824,10 +887,16 @@ export default function App() {
                       <LockKeyhole size={11} />
                       Your code stays on your machine.
                     </span>
-                    <span>
-                      <kbd>↵</kbd> to send <span className="footnote-dot">·</span>
-                      <kbd>⇧ ↵</kbd> new line
-                    </span>
+                    {nextStepSuggestion && !prompt ? (
+                      <span id="next-step-keyboard-hint" className="next-step-keyboard-hint">
+                        <kbd>Tab</kbd> use suggestion
+                      </span>
+                    ) : (
+                      <span>
+                        <kbd>↵</kbd> to send <span className="footnote-dot">·</span>
+                        <kbd>⇧ ↵</kbd> new line
+                      </span>
+                    )}
                   </div>
                 </div>
               </>

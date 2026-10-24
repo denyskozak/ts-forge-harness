@@ -183,3 +183,19 @@ test('R3F runtime, performance, visual and scenario receipts use compact UI card
   assert.equal(scenario.title, 'Browser scenario passed');
   assert.deepEqual(scenario.metrics, ['4/4 steps', '700 ms', 'Saved']);
 });
+
+test('architecture outlook shows a compact summary without raw evidence', () => {
+  const view = presentToolResult(
+    tool(
+      'architecture_outlook',
+      JSON.stringify({
+        complete: false,
+        checked: 300,
+        scenarios: [{ evidence: [{ path: 'internal.ts', line: 2 }] }],
+      }),
+    ),
+  );
+  assert.equal(view.title, 'Architecture outlook');
+  assert.deepEqual(view.metrics, ['1 review areas', '300 files inspected', 'Partial scan']);
+  assert.doesNotMatch(JSON.stringify(view), /internal.ts|"evidence"/);
+});

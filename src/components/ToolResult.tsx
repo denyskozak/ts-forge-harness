@@ -212,6 +212,18 @@ export function presentToolResult(message: Message): Presentation {
       ].filter(Boolean),
     };
   }
+  if (name === 'architecture_outlook')
+    return {
+      ...base,
+      title: 'Architecture outlook',
+      summary: 'Conditional growth scenarios · source review required',
+      icon: <Sparkles size={15} />,
+      metrics: [
+        `${count(value.scenarios) ?? 0} review areas`,
+        `${asText(value.checked) ?? '0'} files inspected`,
+        value.complete === true ? 'Scan complete' : 'Partial scan',
+      ],
+    };
   if (
     [
       'project_mental_model',
@@ -222,6 +234,7 @@ export function presentToolResult(message: Message): Presentation {
       'product_architecture',
       'api_contracts',
       'analyze_impact',
+      'platform_capabilities',
       'discover_validation_plan',
       'maintenance_audit',
       'release_readiness',
@@ -241,10 +254,15 @@ export function presentToolResult(message: Message): Presentation {
         count(value.frameworks) !== undefined ? `${count(value.frameworks)} frameworks` : '',
       ].filter(Boolean),
     };
-  if (['search_local_knowledge', 'web_search', 'contribution_guide'].includes(name))
+  if (['search_local_knowledge', 'web_search', 'web_read', 'contribution_guide'].includes(name))
     return {
       ...base,
-      title: name === 'web_search' ? 'Web research complete' : 'Project guidance found',
+      title:
+        name === 'web_read'
+          ? 'Web page read'
+          : name === 'web_search'
+            ? 'Web research complete'
+            : 'Project guidance found',
       summary: asText(value.query),
       tone: 'success',
       icon: <Search size={15} />,
