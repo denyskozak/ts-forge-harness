@@ -1,451 +1,61 @@
-<p align="center">
-  <img src="docs/assets/forge-anvil-hero.png" alt="A copper anvil with a forged TypeScript mark and lightning bolt" width="30%" />
-</p>
+# TS Forge
 
-<h1 align="center">TS Forge</h1>
+**An open-source, local-first coding agent for TypeScript.**
 
-<p align="center">
-  <strong>A free, private, local-first coding agent built for TypeScript.</strong><br />
-  Understand the project, discuss critical choices, review every change, and keep the entire workflow on your Mac.
-</p>
+Understand a project, build features, review changes, and run checks with a local model through Ollama.
 
-<p align="center">
-  Electron · React · TypeScript · Ollama · SQLite · MIT
-</p>
+<img src="docs/assets/forge-workspace.png" alt="TS Forge desktop workspace" width="100%" />
 
----
+## What it does
 
-TS Forge is an open-source desktop coding harness for local language models. It specializes in TypeScript projects and includes focused support for React, React Native, Expo, and Next.js.
+- **Understands your project:** maps files, symbols, imports, and framework relationships before working.
+- **Plans and edits:** breaks down tasks, asks important questions, and proposes changes with reviewable diffs and undo.
+- **Checks its work:** runs TypeScript and project validations, opens local previews, and inspects them with browser tools.
+- **Keeps context:** saves sessions, decisions, checkpoints, and compacted history locally.
+- **Supports your stack:** includes guidance for React, Next.js, React Native/Expo, Three.js/R3F, and Node.js backends.
+- **Connects tools:** supports reviewed Git operations, optional web research, MCP connections, and SSH file delivery.
 
-It builds a compact mental model of each workspace before a task, gives the model controlled inspection tools, pauses for important product decisions, and requires human review before changing files or running the compiler.
+Built with Electron, React, TypeScript, and SQLite. No account or subscription required.
 
-<p align="center">
-  <img src="docs/assets/forge-workspace.png" alt="TS Forge workspace with a local TypeScript coding session" width="100%" />
-</p>
+## Get started
 
-## What is already working
-
-| Area                        | Capability                                                                                                                      |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **Local inference**         | Connects to a tool-capable model through a loopback-only Ollama endpoint.                                                       |
-| **Project understanding**   | Detects frameworks, entrypoints, routes, screens, state, navigation, data boundaries, and internal import relationships.        |
-| **TypeScript intelligence** | Provides diagnostics, definitions, references, quick info, project configuration analysis, and an isolated full compiler check. |
-| **Agent workflow**          | Runs a bounded model/tool loop with streaming output, context compaction, stop handling, and persistent sessions.               |
-| **Critical questions**      | Lets the model pause with three answer choices and a custom response when a missing decision can materially change the work.    |
-| **Reviewed changes**        | Uses exact source replacements, visible diffs, explicit approval, atomic writes, checkpoints, and guarded undo.                 |
-| **Multiple workspaces**     | Saves local projects, switches between them, and refreshes analysis when a workspace opens.                                     |
-| **Voice drafts**            | Performs on-device speech recognition, shows a live waveform, and inserts the transcript without sending it.                    |
-| **Next-step suggestions**   | Uses the selected local model to propose one contextual follow-up; Tab copies it into the composer without sending it.          |
-| **Training lab**            | Builds reviewed datasets and launches experimental MLX LoRA jobs in a separate local workspace.                                 |
-| **SSH delivery**            | Tests saved SSH profiles, inspects remote directories, and uploads reviewed workspace files after explicit approval.            |
-| **Project creation**        | Scaffolds pnpm-first React, Next.js, Expo, R3F, Hono API and T3 projects in an empty workspace after approval.                  |
-| **Development loop**        | Discovers scripts, manages dev processes, changes dependencies, drives a local browser and records screenshots and diagnostics. |
-| **Git execution**           | Reads status/diff/log and performs reviewed branch, staging, commit and non-force push operations.                              |
-
-## Why this harness exists
-
-Small local models need more structure than a chat box. TS Forge supplies that structure:
-
-- A project map gives the model the useful parts of the repository without sending every file on every turn.
-- Read tools expose bounded source ranges with hashes and explicit completeness information.
-- TypeScript tools answer semantic questions without granting a general shell.
-- A critical-question gate prevents the agent from guessing about architecture, behavior, scope, or destructive choices.
-- File edits and compiler runs wait for the user.
-- SQLite records sessions, tool trajectories, checkpoints, and recovery state locally.
-
-## Quick start
-
-### Requirements
-
-- macOS on Apple Silicon
-- Node.js 22.23.1
-- An installed [Ollama](https://ollama.com/) runtime
-- A local Ollama model with tool-calling support
-
-### Run from source
+Requires **macOS on Apple Silicon**, **Node.js 22.23.1**, and [Ollama](https://ollama.com/) with a locally installed model that supports tool calls.
 
 ```sh
-git clone git@github.com:denyskozak/ts-forge.git
+git clone https://github.com/denyskozak/ts-forge.git
 cd ts-forge
 npm ci
 npm run dev
 ```
 
-In **Settings**, enter the Ollama endpoint and local model name, then select **Test connection**. The check validates discovery, local/tool capability, and real generation before you save the settings.
+1. Open **Settings**, choose your model, and click **Test connection**. The default Ollama endpoint is `http://127.0.0.1:11434`.
+2. Open a project and let Forge analyze it.
+3. Describe the change you want, answer any critical questions, and review proposed edits and execution requests.
 
-The endpoint must be an HTTP loopback address such as `http://127.0.0.1:11434`. Model downloads and Ollama configuration remain explicit setup steps outside Forge.
+## Privacy and safety
 
-### First task
+Model inference uses a loopback-only Ollama connection. Sessions and source context stay on your machine. File changes and privileged operations pass through review and validation gates.
 
-1. Open a TypeScript project from the workspace picker.
-2. Wait for the automatic project and TypeScript analysis.
-3. Describe a task in the composer, or dictate an editable voice draft.
-4. Answer a critical clarification if the model needs a decision that the repository cannot provide.
-5. Review each proposed diff or compiler request.
-6. Apply, decline, stop, or undo from the interface.
+Optional web research, package downloads, remote MCP servers, and SSH operations can use the network with approval. Local execution is not a complete security boundary; review generated code and tool requests. See [SECURITY.md](SECURITY.md).
 
-## Project understanding
-
-Forge creates a model-oriented map for every workspace. The map contains file paths, symbols, imports, exports, framework evidence, and a higher-level mental model of the application.
-
-For React and Next.js projects it identifies entrypoints, routes, components, hooks, state, and data access. For React Native and Expo it also traces screens, navigation, native boundaries, and platform-specific files.
-
-The index is bounded and reports when a scan is incomplete. Source text is loaded only through explicit read tools or a small task-relevant architecture slice.
-
-## React Three Fiber specialization
-
-Forge detects `@react-three/fiber`, Three.js, Drei, Rapier and React Postprocessing from workspace manifests and source imports. The React Three Fiber skill activates for detected scenes during a run, and can also be selected in **Skills**. Automatic activation does not change your saved preferences.
-
-The read-only `inspect_scene` tool returns paginated source evidence with file names and line numbers:
-
-- Canvas roots, configuration props and lexical JSX parent/child relationships;
-- frame subscriptions and their priority arguments;
-- asset loader/preload calls, physics components, effects and pointer handlers;
-- review hints for possible state updates or object allocations inside inline frame callbacks.
-
-For example: “Add keyboard movement to the player; preserve the existing physics controller and camera. Inspect the scene first, then propose a grouped change with validation criteria.” The skill guides the model through scene ownership, installed API versions, frame updates, resource lifetimes, controls, native/client boundaries and visual acceptance criteria. The compact project map includes scene roots, and general project-understanding requests prioritize those files.
-
-This is static evidence, not a runtime scene graph or GPU profiler. Each file is capped at 160 evidence items with explicit truncation; local shadowing, re-exports, custom wrappers, indirect callbacks and dynamic assets need additional reading. Review hints are hypotheses. No models, textures or shaders are downloaded or executed by the analyzer. TypeScript and existing tests remain available through validation recipes; rendering, device performance and physics behavior still require a real scene check.
-
-The built-in guidance draws on the official R3F documentation for [hooks](https://r3f.docs.pmnd.rs/api/hooks), [performance pitfalls](https://r3f.docs.pmnd.rs/advanced/pitfalls), [resource ownership](https://r3f.docs.pmnd.rs/api/objects), and [on-demand rendering](https://r3f.docs.pmnd.rs/advanced/scaling-performance). Forge does not fetch these pages during local analysis.
-
-## Local RAG and optional web search
-
-Forge has three separate knowledge paths:
-
-- **Project RAG** indexes allowed workspace source in bounded chunks and returns file/offset citations through `search_local_knowledge`.
-- **Documentation RAG** indexes only documentation directories selected in Settings. It never scans arbitrary folders or sends those files to a remote service.
-- **Web search and page reading** are enabled by default for new settings; an existing explicit opt-out is preserved. When enabled, each exact query and its configured domain allowlist require a separate approval before leaving the device. Forge sends the query to DuckDuckGo HTML search, returns HTTPS results from allowed domains, and offers `web_read` to read an approved result page.
-
-Project and documentation RAG use local lexical ranking by default. Configure an installed Ollama embedding model such as `nomic-embed-text` to add local vector similarity; embedding batches go only to the existing loopback Ollama endpoint. If embeddings are unavailable, Forge reports the fallback and keeps retrieval local.
-
-Indexes are bounded to 800 chunks and 12 MB per root. Ignored paths, secrets, symlinks and unreadable files remain excluded under the normal workspace policy. Search excerpts are evidence, not authority: the agent must read original project files before editing and cite web URLs when it relies on search results.
-
-Web results and snippets are untrusted external content. The model cannot add domains itself, make arbitrary fetches, bypass the approval, or claim a web search occurred when it was disabled or declined. The page reader permits only allowlisted HTTPS hosts and public IPv4 destinations, pins the validated IP for the TLS request, rejects redirects and non-text/compressed responses, and limits time, download size and model context. It sends no cookies or credentials and executes no page scripts. IPv6-only sites are currently unsupported. Page content remains untrusted: text extraction does not guarantee protection against prompt injection, so existing tool permissions remain in force.
-
-## SSH servers and file delivery
-
-Add server profiles in **Settings → SSH servers**. Forge supports two credential paths:
-
-- **System SSH config / agent:** uses the current user's OpenSSH configuration, default keys, aliases, and running `ssh-agent`.
-- **Private key file:** uses an explicit key path with `IdentitiesOnly`; encrypted keys must already be unlocked in the system agent.
-
-The agent can list configured profiles, test a connection, inspect one absolute remote directory, and upload up to 20 reviewed regular files from the active workspace. Every network operation shows the destination and requires approval. Uploads reject ignored files, secrets, symlinks, directories, paths outside the workspace, and unsafe remote paths. Host keys must already be trusted through OpenSSH `known_hosts`; Forge does not bypass verification or show an interactive password prompt.
-
-This capability deliberately does not provide a remote shell. The agent cannot restart services, install packages, modify databases, run deployment scripts, or copy private keys and `.env` files. Use a least-privileged server account whose filesystem permissions limit the upload destination.
-
-## Framework validation tools
-
-Before creating a task, `discover_validation_plan` detects installed TypeScript, test, lint, Next, Expo and Playwright capabilities without running package scripts. `inspect_native_project` maps Expo/React Native configuration, router, navigation and permission evidence. `run_ui_scenario` runs selected existing Playwright specs only after approval, in a disposable project copy with no network and no writes to the original workspace. Browser scenarios that require a dev server or real device remain unavailable under this restricted runner; the tool reports that failure instead of weakening the sandbox.
-
-## Project creation and the development loop
-
-For an empty workspace Forge can run a reviewed pnpm-first scaffold for React/Vite, Next.js App Router, Expo, React Three Fiber, Hono API or T3. These recipes use the official generators and therefore require network access and explicit approval. Existing workspaces are never overwritten by the scaffolder.
-
-For existing projects the agent can discover exact `package.json` scripts, start and stop managed processes, retain bounded logs and detect loopback preview URLs. Dependency additions and removals use pnpm with lifecycle scripts disabled. The interactive browser accepts local HTTP URLs only and can inspect controls, click, fill fields, press allowlisted keys, read console/load failures and save screenshots for review.
-
-`scaffold_product` also writes bundled, reviewable **SaaS, storefront, dashboard, API and pnpm monorepo starters** without running an external generator. They include SQLite migrations, scrypt password hashing, hashed server-side sessions, HttpOnly/SameSite cookies, owner-scoped data access, persistence/auth contract tests and browser scenarios that verify data after reload. Installation is a separate reviewed action. Deployment still needs environment-specific HTTPS, email verification and recovery, abuse controls, monitoring, backup/restore and payment/webhook providers where applicable.
-
-### Focused tools and resumable tasks
-
-The model receives core TypeScript tools plus one relevant optional capability group. `enable_tool_group` switches between development, browser, data, Git, knowledge, maintenance, SSH and MCP; small native/R3F inspection groups can stay loaded. Disabled web search is never advertised. Tool schemas count toward the context budget. Required engineering rules are concise during inference; `skill_instructions` retrieves a full runbook when needed.
-
-The harness enforces `plan_task` before file, scaffold or dependency changes. Checkpoints retain the original goal, criteria, validation receipts, applied changes, current phase, pass count and loaded groups after each tool. **Resume task** continues after a stop, restart or step limit without resetting the task contract. It re-analyzes current sources, requires fresh file reads and does not replay unfinished tool calls automatically. Historical summaries survive message compaction; uncertain side effects must be inspected before retrying.
-
-Small local models sometimes return valid-looking tool arguments in the wrong JSON shape—for example, an array encoded inside a string, a criterion wrapped in `{ "description": ... }`, an invented absolute path or a common argument alias. Forge accepts a repair only when the complete object passes the advertised schema. If a model answers with prose instead of a required action, the retry is constrained to a JSON schema for the currently allowed tools and then passes through the same Zod validation, review and approval boundary. Explicit read-only requests can recover safe printed envelopes and skip an unnecessary `plan_task`. A single remaining contract check is executed from the saved check object instead of asking the model to reconstruct its arguments.
-
-### Browser evidence and maintenance
-
-Browser snapshots include selectors for real controls. Tools support bounded waits, text/value/count/visibility assertions, select controls, scrolling and desktop/tablet/phone sizes. Console errors, failed requests and HTTP errors are returned as evidence. Screenshots can be expanded in chat; **Show live browser** opens the same browser session the agent uses. The Build loop has a button to open a managed process URL in that browser. Its embedded iframe remains a separate preview session.
-
-`check_local_http` supports local JSON requests and expected status/body assertions. Mutating requests require review. Maintenance tools provide static review candidates, approved registry advisory/upgrade queries, semantic TypeScript rename proposals and release-readiness receipts. The new debugging, compatible-refactoring, dependency-maintenance, security-review and release-recovery skills connect these tools to concrete verification steps. Static findings are hypotheses, not a security or performance certification.
-
-### Disposable data workflows
-
-SQLite targets are fresh owned databases under ignored `.forge/databases`. `database_migrate` executes explicit SQL files: SQLite dry-runs use a disposable copy; PostgreSQL dry-runs use a transaction and rollback on an owned Docker container. PostgreSQL readiness is checked before use. Constraint/data-loss hints supplement execution; representative data remains necessary.
-
-`run_seed_workflow` runs an existing seed script against a copied SQLite target in a network-denied project snapshot, without original `.env` files. Only a successful run updates the disposable database. Production URLs are never inferred or used. Package-script seeds currently support SQLite; PostgreSQL fixtures can be supplied as reviewed SQL. Executable/connection-changing SQL is rejected. Isolated runners require macOS and fail closed elsewhere.
-
-Git status, diff and recent history are read-only. Branch creation, explicit file staging, commit and push each require approval. Forge does not expose force push, broad `git add .`, destructive reset or arbitrary shell commands.
-
-## Backend and infrastructure specialization
-
-Backend tasks automatically receive focused guidance for typed API contracts, authorization boundaries, ORM-backed persistence and modular service design. Architecture guidance favors cohesive business modules, explicit application services and infrastructure adapters over premature services or generic layers. tRPC projects add router, context, middleware, Zod, authorization and client-cache rules. GraphQL projects add schema evolution, resolver boundaries, request-scoped data loaders, query-cost controls and generated-contract checks. Queue, worker and webhook work also activates retry, idempotency, outbox, deduplication and recovery rules. Observability tasks cover structured redacted logs, bounded metrics, tracing and separate readiness and liveness signals.
-
-Terraform and HCL work activates dedicated IaC and infrastructure-security skills. They cover provider constraints, cohesive modules, protected remote state, least-privilege IAM, private networking, secret handling and review of replacement, deletion, public-exposure and cost changes in plans. Forge may author reviewed files, but it must not run `apply`, `destroy`, state mutation or import without explicit authorization for a named environment.
-
-## Harness coverage and next iteration
-
-The harness currently combines reviewed file changes, checkpoints, local TypeScript tools,
-isolated validation, browser interaction and focused capability groups. These mechanisms
-reduce model mistakes, but framework instructions alone cannot guarantee delivery.
-
-The first portability iteration adds `platform_capabilities`: a bounded, read-only inventory
-of root and nested package manifests, declared framework versions, script names and verification
-limits. It respects workspace exclusions and reports malformed manifests and incomplete scans.
-Every agent run receives this evidence automatically. Platform runbooks are discoverable in
-Skills and loaded on demand to limit context use. They cover Vue/Nuxt, Angular, Svelte,
-web interaction, React Native/Expo, Three.js/R3F, PixiJS, Node services and Electron/Tauri.
-Dependency evidence describes the declared stack; it does not prove an executable is installed.
-
-Validation discovery now returns the actual TypeScript configuration paths, including nested
-projects, instead of inventing a root `tsconfig.json`. These are candidates requiring inspection:
-a solution config may contain only references, and framework templates require their own checks.
-
-| Gap found in the implementation                                                   | Next harness work                                                                                    | Acceptance evidence                                                                 |
-| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Validation and process recipes mostly assume the repository root                  | Add explicit package-directory execution and workspace dependency resolution                         | Same edit/test workflow succeeds in standalone and pnpm workspace fixtures          |
-| TypeScript diagnostics do not cover framework templates                           | Add installed Vue, Angular and Svelte compiler recipes behind the existing sandbox                   | Deliberately broken templates fail; corrected fixtures pass                         |
-| Source understanding is strongest for TS/JS and React                             | Add SFC/template indexing and cross-file references without treating regex matches as semantic proof | Navigation and impact fixtures for Vue, Angular and Svelte                          |
-| Browser checks cannot establish native correctness                                | Add simulator/device adapters and explicit unavailable states                                        | Verified navigation, permissions and lifecycle scenarios on each supported platform |
-| R3F tools and bundled snake recipe are narrower than general graphics development | Add native Three.js/Pixi scene diagnostics and repeatable input/teardown scenarios                   | Runtime interaction and resource-lifecycle regressions are detected                 |
-| Small-model recovery relies on prompt heuristics and tool-call repairs            | Build a fixed task suite with persisted-file, behavior and completion oracles                        | Compare success, invalid calls, retries and false completion across models          |
-| Security skills describe rules but do not establish enforcement in generated apps | Add API denial-path and tenant-isolation fixtures                                                    | Anonymous, cross-user and invalid requests are rejected by the running service      |
-| Broad skill selection can consume a small model context                           | Route full runbooks by target package and current phase                                              | Record context size and task success before promoting a routing change              |
-
-Start with package-aware execution and framework compiler recipes, then the cross-stack task
-suite. Keep scaffolding, semantic analysis, compilation, runtime checks and deployment as separate
-capabilities with separate receipts. New profile guidance is not a claim of complete framework
-support. Native Swift/Kotlin/Rust development remains outside current TypeScript tool coverage.
-
-Reference boundaries: [Vue requires vue-tsc for SFC type checks](https://vuejs.org/guide/typescript/overview),
-[Angular builds use its configured builders](https://angular.dev/tools/cli/build), and
-[Three.js resource cleanup requires explicit ownership and disposal](https://threejs.org/manual/pages/cleanup.html).
-
-## Roadmap
-
-![TS Forge product roadmap](docs/assets/ts-forge-roadmap.png)
-
-The detailed, testable plan lives in [ROADMAP.md](ROADMAP.md). It covers the visible build loop, T3 and data tooling, maintenance automation, an MCP product studio, mobile/R3F verification and local-model evaluation.
-
-## Engineering principles
-
-Four engineering skills are required in every agent run: **Problem Understanding**, **Complete Delivery**, **Sustainable Design** and **Evidence-driven Testing**. They survive legacy settings and cannot be disabled in the Skills page.
-
-The agent defines the actual problem and observable acceptance criteria, asks only for decisions that materially affect the solution, and delivers persisted, runnable changes. Architecture guidance prioritizes maintainability, resilience, extensibility and measured efficiency. Validation follows risk: unit, integration, contract, end-to-end and regression tests, with property, accessibility, security, migration/recovery and performance checks when relevant. The agent must report execution evidence and unavailable checks; these instructions do not guarantee exhaustive coverage or production readiness.
-
-## Mandatory MCP guidance
-
-**MCP Workflow** and **MCP Security** are always enabled. Old settings gain both skills on load, settings updates cannot remove them, and the agent includes them even if an in-memory settings object omits them. The Skills page shows both as required with disabled toggles.
-
-The guidance covers capability discovery, tool schemas, resources and prompt templates, protocol-version differences, result validation, pagination, cancellation, safe retries, server trust, scoped permissions and secret handling. It distinguishes tool errors from transport failures and warns that a timed-out write may already have taken effect. Server content and annotations remain untrusted; permissions must be enforced by the host, not by prompt instructions alone.
-
-**Settings → MCP servers** configures a real opt-in client using stdio or Streamable HTTP. Save a profile, enable it and use **Connect / test** to inspect negotiated tool schemas. Tools are blocked until their exact names are allowlisted. Agent connections and calls require review; credentials use environment variable names and stay outside model context. Calls validate arguments against discovered schemas and use bounded timeouts. Audit records contain server/tool identities and outcomes without credential payloads.
-
-Stdio servers execute outside the validation sandbox and may access files or network; remote HTTP servers receive supplied data. This is an explicit privacy boundary, not a guarantee that every MCP integration is private. Remote endpoints require HTTPS; plain HTTP is limited to loopback. OAuth flows, MCP resources/prompts, registry installation and publishing remain future work. The implementation uses the official [MCP TypeScript SDK client](https://ts.sdk.modelcontextprotocol.io/client).
-
-References: the official [MCP specification](https://modelcontextprotocol.io/specification/2026-07-28) and [tools documentation](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2025-06-18/server/tools.mdx). The guidance tells the model to use the negotiated version and installed SDK instead of assuming every server supports the latest protocol.
-
-## Git and contribution skills
-
-Three selectable skills guide repository work:
-
-- **Git Workflow:** establish branch/index/upstream state, prepare focused commits, choose explicit push destinations and handle divergence without discarding user work.
-- **Git Review:** distinguish unstaged, staged and branch comparisons; review changes with evidence; plan conflict resolution and recovery.
-- **Contributing:** read project rules, prepare focused contributions and PR descriptions, report actual validation, and address review feedback.
-
-Matching Russian and English Git requests activate the relevant guidance for that run without changing saved preferences. Git Review and Contributing also load the core Git capability/safety instructions.
-
-The local read-only `contribution_guide` tool loads allowed `CONTRIBUTING` files (including nested packages), GitHub PR templates and `CODEOWNERS`. It returns source hashes, pagination, truncation markers and explicit capability limits. Rule files remain untrusted repository content and cannot authorize access outside the workspace.
-
-Forge now pairs this guidance with bounded Git tools. Status, diff and recent log are read-only. Branch creation, explicit staging, commit and non-force push require separate approvals that show the exact branch, files, message or destination. Destructive reset, broad staging, force push, credential management and PR publication remain unavailable.
-
-Example requests: “Prepare a commit plan preserving unrelated staged changes”, “Помоги подготовить PR по правилам этого проекта”, or “Разбери конфликт по этим версиям файлов и предложи проверяемое решение”.
-
-Workflow references: official Git documentation for [status](https://git-scm.com/docs/git-status), [diff](https://git-scm.com/docs/git-diff) and [push](https://git-scm.com/docs/git-push). These pages are not fetched during a local agent run.
-
-## Task contracts, grouped changes, and evidence
-
-Each run starts with a persisted task contract. The agent can refine its goal, constraints, out-of-scope work, acceptance criteria, and required checks through `plan_task`. Its explicit acceptance criteria replace the initial request placeholder so the interface does not repeat the same task.
-
-- **Review together:** `apply_changeset` proposes up to 40 files under one approval, with an impact preview. All original versions are checked before writing. A journal supports rollback after failure, cancellation, or restart; undo preserves concurrent user edits and reports conflicts. Individual file writes are atomic, but other processes can observe intermediate files during a multi-file change.
-- **Validate in isolation:** `run_validation` runs a fixed recipe in a temporary project snapshot with network access denied and the original workspace protected from writes. Recipes cover TypeScript, Vitest/Jest or explicit Node tests, ESLint, Prettier, Next.js, installed Expo Doctor, and package export target existence. Missing tools produce an unavailable result; Forge never installs them automatically.
-- **Verify explicitly:** checks record their real exit status and source fingerprint. The task becomes `completed_verified` only after changes are applied, all required checks pass for that fingerprint, and you confirm every acceptance criterion in the Task contract panel. A model's final message cannot assign this status. Checks can be rerun from the panel.
-- **Reuse analysis:** each active workspace keeps a TypeScript language service, updates changed source versions, and exposes paginated references. The cache retains at most three workspaces and invalidates on filesystem events and Forge edits.
-- **Inspect impact:** `analyze_impact` traces resolved static imports and re-exports to consumers, related tests, exports, and possible framework/security boundaries. The preview includes source edges and limitations before approval.
-- **Read results:** tool receipts render as purpose-specific UI for plans, files, changes, checks, analysis, browsers, processes, packages, Git, SSH, MCP and databases. Protocol identifiers and raw JSON stay out of the chat; long text logs remain available on demand.
-
-![Task contract with validation evidence](docs/forge-task-verified.png)
-
-### Current scope
-
-Semantic snapshots are bounded to 2,000 files / 16 MB and report omitted files. They use project configuration and path aliases, but are not a complete multi-project TypeScript build service. Dynamic imports, runtime calls, dependency declarations, and framework-generated code can make impact analysis incomplete; its preview is evidence to review, not a safety guarantee.
-
-Validation snapshots are bounded to 10,000 files / 64 MB (10 MB per file), exclude ignored and protected files, and refuse partial scans. Installed dependencies are shared read-only rather than copied or fingerprinted; avoid changing dependencies during checks. Composite projects may require their own build preparation. A passing recipe only proves the selected check passed, not the whole feature. These execution protections currently require macOS.
-
-## Critical clarification loop
-
-Before choosing actions on each step, the local model checks whether one missing user decision could substantially change:
-
-- architecture;
-- observable behavior;
-- data-loss risk;
-- task scope.
-
-When that happens, the model calls `ask_user_question` with three concrete options. The interface adds a fourth choice for a custom response. Forge enters a persisted waiting state and returns the answer to the same model/tool loop. If the model asks a question alongside other tool calls, those sibling actions are skipped until the answer arrives.
-
-The agent is instructed to inspect the repository instead of asking about discoverable facts, and to use a safe reversible default for low-impact choices.
-
-![TS Forge clarification UI](docs/forge-clarification.png)
-
-## Privacy and execution boundaries
-
-TS Forge has no account, telemetry, cloud-model integration, or hosted backend.
-
-- Model requests accept HTTP loopback endpoints only.
-- Redirects and cloud model entries are rejected.
-- Electron uses a sandboxed renderer, validated IPC, restricted navigation, and microphone-only media permission.
-- Workspace reads reject ignored paths, conventional secrets, symlink escapes, binaries, and oversized files.
-- The agent has no general terminal tool.
-- Compiler execution uses a bundled TypeScript binary in a restricted macOS process with network access denied.
-- Voice recognition is forced into Chromium's on-device mode and has no remote fallback.
-
-An external Ollama process remains part of the local trust boundary. SQLite databases, checkpoints, logs, and training data are stored as plaintext in Electron's local `userData` directory shown in Settings.
-
-See [SECURITY.md](SECURITY.md) for the threat model and current limitations.
-
-## Build and test
+## Development
 
 ```sh
-npm run typecheck       # TypeScript validation
-npm test                # Harness, persistence, security, map, tools, and state tests
-npm run build           # Production renderer and Electron bundles
-npm run test:desktop    # Real Electron UI and IPC smoke test
-npm run test:e2e        # Real Electron + local Ollama; checks availability first
-npm run test:products   # Temporary starters: install, test, typecheck, build, web E2E
-npm run test:ui         # UI stress fixture
-npm run package         # Unsigned macOS app bundle
+npm test                 # Harness regression tests
+npm run build            # Production build
+npm run test:desktop     # Electron UI and IPC smoke tests
+npm run eval:local       # Real Ollama coding evaluations
 ```
 
-Optional local-model evaluations:
+**Status: experimental.** Coding quality depends on the local model. A successful connection or TypeScript check does not prove that a feature works. Real-model evaluations still expose logic and recovery failures; signing and notarization remain unfinished.
 
-```sh
-npm run eval:local
-npm run eval:understanding
-```
+## Learn more
 
-Desktop tests create temporary workspaces and local fixture servers. The smoke test exercises voice input, settings, multiple workspaces, automatic analysis, clarification recovery, reviewed changes, TypeScript checks, undo, browser interactions/assertions, screenshot artifacts, skills and training data. `test:products` downloads fixture dependencies; install Chromium first with `npx playwright install chromium`. Receipts are written under ignored `.forge-test-results`.
-
-### Live local-model E2E
-
-`npm run test:e2e` checks the loopback Ollama endpoint before building or launching Electron. If the connection is refused, it reports **SKIP** and exits successfully; `FORGE_E2E_REQUIRED=1` makes that a failure for a dedicated test machine. A running server with a missing/incompatible model, server errors, timeouts and failed assertions are failures, never skips. No models or dependencies are downloaded and Ollama is not started automatically.
-
-The suite chooses the largest installed local tool-capable model by default. Override it explicitly:
-
-```sh
-FORGE_E2E_MODEL=llama3.1:8b npm run test:e2e
-FORGE_E2E_REQUIRED=1 FORGE_E2E_TIMEOUT_MS=300000 npm run test:e2e
-```
-
-`FORGE_E2E_ENDPOINT` can select another HTTP loopback endpoint. `FORGE_E2E_CASES=r3f-scene-tool,edit-validate-undo` selects specific scenarios for a targeted rerun; the real connection test always runs. The per-scenario timeout defaults to 240 seconds. `FORGE_E2E_CONTEXT_TOKENS` defaults to 32768 to accommodate Forge’s own source map and architecture evidence; choose a value supported by your model and memory. Execution currently requires macOS.
-
-Four scenarios use real inference through Electron and the production harness:
-
-1. Test connection in Settings, including actual generation.
-2. Explain a source-only temporary copy of Forge and cite its renderer/preload/main/agent boundaries; verify that files remain unchanged. Citation assertions are a basic grounding check, not a full semantic grading of the explanation.
-3. Use `inspect_scene` and read a small R3F fixture; require Canvas, frame and asset evidence. Dependencies are manifest-only: this checks project understanding, not GPU rendering.
-4. Fix a small TypeScript function through the visible approval UI, require the agent's compiler validation, independently compile and test behavior in a sandbox, reload persisted evidence, then undo the changes.
-
-Only the native folder picker is stubbed. Inference is real. Automatic approval is restricted to the disposable edit fixture and its single allowed source file. Independent behavioral assertions live outside the editable project. The suite uses separate Electron data and never opens the working repository for model edits. It does not confirm acceptance criteria on your behalf.
-
-Reports, model identity/digest, Git revision, session evidence, screenshots and Playwright traces are written under `.forge-test-results/<timestamp>/` (Git-ignored); temporary workspaces are removed. Model behavior is nondeterministic, so a failure may identify either a harness bug or a capability limitation. Keep the deterministic `npm test` and `npm run test:desktop` checks alongside this suite. The [recorded live baseline](docs/live-e2e-baseline.json) passed 2/4 cases on `llama3.1:8b`: connection and Forge understanding passed; scene tool use and code correctness failed. The suite intentionally reports those capability failures.
-
-## Harness architecture
-
-The renderer never receives Node.js access. A small preload bridge exposes typed operations to the Electron main process, where the durable agent loop validates every model tool call. Project inspection, mutations, compiler execution, persistence, and local inference remain separate capabilities with explicit boundaries.
-
-<p align="center">
-  <img src="docs/assets/forge-harness-architecture.svg" alt="TS Forge harness architecture diagram" width="100%" />
-</p>
-
-### Repository map
-
-```text
-src/                        React UI, run state, voice input, review controls
-electron/main.ts            Electron lifecycle, permission policy, typed IPC
-electron/agent.ts           Model loop, tools, clarifications, approvals
-electron/store.ts           SQLite state, journal, snapshots, map cache
-electron/workspace.ts       File policy, bounded reads, checked atomic edits
-electron/project-map.ts     Cached TypeScript project map and context rendering
-electron/mental-model.ts    React, React Native, Expo, and Next.js relationships
-electron/language-tools.ts  TypeScript diagnostics and symbol queries
-electron/executor.ts        Restricted macOS subprocess execution
-electron/training.ts        Reviewed datasets and local MLX job lifecycle
-shared/                     IPC contracts, settings, skills, shared map types
-tests/                      Harness, hardening, reducer, and Electron smoke tests
-```
-
-## Training lab
-
-Training is experimental and separate from inference. Ollama serves the active model; MLX trains adapters on Apple Silicon.
-
-Forge can collect a completed response as a draft example with its task and tool context. Nothing enters a dataset automatically. Examples must be reviewed before export, and the dataset builder groups related tasks to avoid leaking the same family across training and validation splits.
-
-See the [training plan](docs/training-plan.md) for the current workflow and open evaluation work.
-
-## Documentation
-
-- [Documentation index](docs/README.md)
-- [Project map](docs/articles/project-map.ru.md)
-- [React and React Native project understanding](docs/articles/project-understanding.ru.md)
-- [TypeScript agent tools](docs/articles/typescript-agent-tooling.ru.md)
-- [Critical clarification workflow](docs/articles/critical-clarifications.ru.md)
-- [On-device voice input](docs/articles/voice-input.ru.md)
-- [Production review](docs/next-improvements.md)
+- [Documentation](docs/README.md)
+- [Evals and code quality](docs/evals-and-quality.md)
 - [Contributing](CONTRIBUTING.md)
-
-## Current limits
-
-- The supported execution target is macOS on Apple Silicon.
-- App signing, notarization, updates, and clean-install release testing are still open work.
-- The project map uses bounded indexing and approximate token estimates.
-- A full Electron restart marks an active run as interrupted; a renderer reload reconnects to pending approval or clarification.
-- MLX training quality, adapter import, and broader coding benchmarks still need production validation.
+- [Security](SECURITY.md)
 
 ## License
 
-TS Forge is available under the [MIT License](LICENSE). Model weights and datasets keep their own licenses.
-
-### Security and architecture evolution
-
-Five additional runbooks cover threat modeling, resource/tenant authorization,
-untrusted I/O, secrets and abuse resistance, and incremental architecture evolution.
-Security and architecture requests activate the relevant guidance automatically;
-all five can also be enabled in Skills.
-
-The local `architecture_outlook` tool scans up to 300 source files, respecting workspace
-exclusions. It returns file/line evidence for identity, external I/O and persistence
-review areas, with conditional growth triggers, small next steps and suggested tests.
-It reports partial coverage explicitly and never includes source snippets or secret
-values in its report. Lexical matches can include comments and tests: they are leads
-for source review, **not verified vulnerabilities or predictions of future demand**.
-
-The agent uses existing context first. When a decision materially changes the design,
-it can ask one question with three choices and a custom answer through the existing
-question UI. Routine work should continue without speculative architecture questions.
-Accepted decisions belong in the project's architecture documentation, including
-alternatives, verification and a trigger for revisiting them. This iteration does not
-automatically migrate architecture, run penetration tests or certify security.
-
-Threat-modeling guidance follows the [OWASP threat modeling workflow](https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html).
-
-### Live web research regression
-
-With Ollama running and `llama3.1:8b` installed, run `npm run test:web-live`.
-Override the model with `FORGE_E2E_MODEL`. This exercises real inference, DuckDuckGo
-search and reading React documentation through Electron IPC in a temporary workspace.
-The test clicks approvals only for web requests; it rejects other operation types.
-It checks tool receipts, chat rendering and renderer errors, saving screenshots and
-a report under `.forge-test-results/`. It requires internet access and fails when the
-model or provider is unavailable; it never substitutes mocked results.
-
-### Reviewed R3F video poker recipe
-
-`create_r3f_game({ recipe: "poker" })` proposes a reviewed changeset containing a
-single-player Jacks or Better table, pure TypeScript rules and 15 rules/state tests.
-It uses practice credits, local canvas card textures and keyboard-accessible hold
-buttons. The same edit approval, fingerprint and validation gates apply. This is a
-deterministic starter supplied by the harness; it is not evidence that a small local
-model can reliably implement arbitrary games from scratch.
-
-Eval policy, independent acceptance checks and remaining quality gaps: [Evals and code quality](docs/evals-and-quality.md).
+[MIT](LICENSE). Model weights and datasets retain their own licenses.
