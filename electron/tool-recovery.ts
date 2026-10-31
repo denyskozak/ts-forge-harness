@@ -34,6 +34,7 @@ const SAFE_TEXT_RECOVERY_TOOLS = new Set([
   'git_diff',
   'git_log',
   'plan_task',
+  'read_task_memory',
   'enable_tool_group',
   'skill_instructions',
 ]);

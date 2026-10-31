@@ -268,6 +268,9 @@ export type AgentEvent =
   | { type: 'task'; task: TaskRecord }
   | { type: 'changeset'; changeSet: ChangeSet };
 export interface ForgeAPI {
+  speechStatus(): Promise<{ ready: boolean; error?: string }>;
+  transcribeSpeech(wav: Uint8Array, language: SpeechLanguage): Promise<string>;
+  cancelSpeech(): Promise<void>;
   state(): Promise<AppState>;
   settings(value: Settings): Promise<Settings>;
   models(): Promise<LocalModel[]>;

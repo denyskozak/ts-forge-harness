@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ForgeAPI, AgentEvent } from '../shared/types';
 const api: ForgeAPI = {
+  speechStatus: () => ipcRenderer.invoke('speech-status'),
+  transcribeSpeech: (wav, language) => ipcRenderer.invoke('speech-transcribe', wav, language),
+  cancelSpeech: () => ipcRenderer.invoke('speech-cancel'),
   state: () => ipcRenderer.invoke('state'),
   settings: (value) => ipcRenderer.invoke('settings', value),
   models: () => ipcRenderer.invoke('models'),

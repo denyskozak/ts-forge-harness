@@ -19,10 +19,12 @@
     "eval:local": "tsx scripts/evaluate.mts",
     "eval:understanding": "tsx scripts/evaluate-understanding.mts",
     "test:ui": "npm run build && node scripts/ui-performance.mjs",
+    "test:voice-live": "npm run build && node scripts/voice-live.mjs",
     "test:e2e": "tsx scripts/live-e2e.mts",
     "test:web-live": "npm run build && node scripts/web-live-e2e.mjs",
     "typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
-    "test:products": "tsx scripts/product-smoke.mts"
+    "test:products": "tsx scripts/product-smoke.mts",
+    "eval:continuity": "tsx scripts/evaluate-continuity.mts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",

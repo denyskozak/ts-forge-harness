@@ -19,12 +19,17 @@ export const checkSchema = z.object({
   files: z.array(z.string().min(1).max(500)).max(80).default([]),
 });
 export type ValidationCheck = z.infer<typeof checkSchema>;
+export const planStepSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  expectedEvidence: z.string().trim().min(1).max(500),
+});
 export const contractInputSchema = z.object({
   goal: z.string().trim().min(1).max(2000),
   constraints: z.array(z.string().max(500)).max(12).default([]),
   outOfScope: z.array(z.string().max(500)).max(12).default([]),
   criteria: z.array(z.string().trim().min(1).max(500)).min(1).max(12),
   requiredChecks: z.array(checkSchema).min(1).max(12),
+  steps: z.array(planStepSchema).min(1).max(8).optional(),
 });
 export const validationSchema = checkSchema.extend({
   id: z.string(),
@@ -52,6 +57,7 @@ export const taskSchema = z.object({
   validations: z.array(validationSchema),
   fingerprint: z.string(),
   appliedChanges: z.number(),
+  steps: z.array(planStepSchema).max(8).optional(),
   outcome: z.enum([
     'in_progress',
     'completed_verified',

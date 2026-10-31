@@ -30,6 +30,14 @@ export function TaskTimeline({
           <summary>Capabilities</summary>
           <span>{checkpoint.groups.join(' · ')}</span>
           <p>{checkpoint.reason}</p>
+          {checkpoint.context && (
+            <p>
+              Context: approximately {checkpoint.context.estimatedInputTokens} /{' '}
+              {checkpoint.context.inputBudgetTokens} input tokens ·{' '}
+              {checkpoint.context.removedGroups} historical groups compacted. Goals and decisions
+              remain in saved task evidence.
+            </p>
+          )}
         </details>
         {!busy && checkpoint.resumable && (
           <button className="button" onClick={onResume}>

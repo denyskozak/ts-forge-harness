@@ -48,7 +48,13 @@ export function VoiceInput({
       ) : (
         <div className="voice-active" role="status" aria-label="Voice input active">
           <canvas ref={voice.canvasRef} aria-hidden="true" />
-          <span>{voice.state === 'starting' ? `Preparing ${selected.code}…` : 'Listening'}</span>
+          <span>
+            {voice.state === 'starting'
+              ? `Preparing ${selected.code}…`
+              : voice.state === 'stopping'
+                ? 'Transcribing locally…'
+                : 'Listening'}
+          </span>
           <button
             className="voice-button stop"
             onClick={voice.stop}

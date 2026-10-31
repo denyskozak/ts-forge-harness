@@ -1,6 +1,7 @@
 /** Tool schemas cost local context. Load capabilities explicitly instead of advertising everything. */
 export const TOOL_GROUPS = {
   core: [
+    'read_task_memory',
     'plan_task',
     'apply_changeset',
     'analyze_impact',

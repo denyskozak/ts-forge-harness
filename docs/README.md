@@ -1,30 +1,30 @@
-# Документация Forge
+# Forge documentation
 
-## С чего начать
+## Getting started
 
-- [Установка, подключение Ollama и первая сессия](../README.md).
-- [Почему connection test не проверяет качество кодинга](./articles/connection-and-coding.ru.md).
-- [Карта проекта: устройство, ограничения и проверка пользы](./articles/project-map.ru.md).
-- [Как агент строит ментальную модель React и React Native проекта](./articles/project-understanding.ru.md).
-- [Инструменты TypeScript-агента: готово, найдено и следующий этап](./articles/typescript-agent-tooling.ru.md).
-- [Локальный voice input и waveform](./articles/voice-input.ru.md).
-- [Критические уточнения во время задачи](./articles/critical-clarifications.ru.md).
-- [Приватность и известные границы защиты](../SECURITY.md).
+- [Installation, connecting Ollama, and your first session](../README.md).
+- [Why a connection test does not measure coding quality](./articles/connection-and-coding.ru.md) (in Russian).
+- [Project maps: design, limitations, and evaluation](./articles/project-map.ru.md) (in Russian).
+- [How the agent builds a mental model of React and React Native projects](./articles/project-understanding.ru.md) (in Russian).
+- [TypeScript agent tools: current capabilities and next steps](./articles/typescript-agent-tooling.ru.md) (in Russian).
+- [Local voice input and waveform](./articles/voice-input.ru.md) (in Russian).
+- [Critical clarification questions during a task](./articles/critical-clarifications.ru.md) (in Russian).
+- [Privacy and known security boundaries](../SECURITY.md).
 
-## Разработка
+## Development
 
-- [Roadmap полезности агента: безопасность, устойчивость, масштабируемость и сопровождаемость](./agent-capability-roadmap.ru.md).
-- [Актуальный анализ после рефакторинга и следующий порядок работ](./next-improvements.md).
-- [Функциональный рефакторинг и UI](./ui-refactor.md).
-- [План обучения TypeScript-специалиста](./training-plan.md).
-- [Правила участия](../CONTRIBUTING.md).
+- [Agent capability roadmap](./agent-capability-roadmap.ru.md) (in Russian).
+- [Post-refactoring analysis and priorities](./next-improvements.md) (in Russian).
+- [Functional refactoring and UI](./ui-refactor.md).
+- [TypeScript specialist training plan](./training-plan.md).
+- [Contributing guidelines](../CONTRIBUTING.md).
 
-## История и измерения
+## History and evaluations
 
-- [Исходный аудит v0.1](./production-readiness.md) — исторический документ.
-- [Исправления v0.2 до последнего UI-рефакторинга](./production-progress.md).
-- [Воспроизведения новых наблюдений](./review-observations.json).
-- [Coding baseline: Qwen](./local-evaluation-v02.json), [Llama](./local-evaluation-llama.json).
-- [Project understanding: Qwen 1.5B](./project-understanding-evaluation.json), [Llama 8B](./project-understanding-evaluation-llama.json).
+- [Original v0.1 audit](./production-readiness.md) (historical, in Russian).
+- [v0.2 fixes before the latest UI refactoring](./production-progress.md) (in Russian).
+- [Reproductions of recent observations](./review-observations.json).
+- Coding baseline: [Qwen](./local-evaluation-v02.json), [Llama](./local-evaluation-llama.json).
+- Project understanding: [Qwen 1.5B](./project-understanding-evaluation.json), [Llama 8B](./project-understanding-evaluation-llama.json).
 
-Статьи хранятся в репозитории; публикация на внешних площадках не выполнялась.
+The articles are stored in this repository and have not been published externally.

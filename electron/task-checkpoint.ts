@@ -1,7 +1,97 @@
 import type { Session } from '../shared/types';
-/** Deterministic evidence summary survives context compaction. No source excerpts or credentials. */
+function savedDecisions(session: Session) {
+  let question: unknown;
+  return session.messages.flatMap((message) => {
+    const call = message.toolCalls?.find((call) => call.function.name === 'ask_user_question');
+    if (call) question = call.function.arguments.question;
+    if (message.role !== 'tool' || message.name !== 'ask_user_question') return [];
+    try {
+      const value = JSON.parse(message.content);
+      return typeof value?.answer === 'string'
+        ? [
+            {
+              question: typeof question === 'string' ? question : undefined,
+              answer: value.answer as string,
+              description:
+                typeof value.description === 'string' ? (value.description as string) : undefined,
+            },
+          ]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+function savedDenials(session: Session) {
+  return session.messages
+    .filter((message) => {
+      if (
+        message.role !== 'tool' ||
+        ['read_file', 'read_files', 'search_code', 'web_read'].includes(message.name ?? '')
+      )
+        return false;
+      try {
+        const receipt = JSON.parse(message.content);
+        return ['declined', 'denied', 'rejected'].includes(receipt?.status);
+      } catch {
+        return /^(?:.*?\b(?:was|were) (?:declined|denied)|(?:declined|denied|rejected)\b)/i.test(
+          message.content,
+        );
+      }
+    })
+    .map((message) => ({ tool: message.name, receipt: message.content }));
+}
+export function readTaskMemory(session: Session, section: string, offset: number, limit: number) {
+  const value =
+    section === 'requests'
+      ? session.messages
+          .filter((message) => message.role === 'user')
+          .map((message) => ({ text: message.content, runId: message.runId }))
+      : section === 'decisions'
+        ? savedDecisions(session)
+        : section === 'deniedActions'
+          ? savedDenials(session)
+          : session.task?.[section as keyof NonNullable<Session['task']>];
+  const text = JSON.stringify(value ?? null);
+  return {
+    section,
+    content: text.slice(offset, offset + limit),
+    nextOffset: offset + limit < text.length ? offset + limit : null,
+    totalCharacters: text.length,
+    historical: true,
+  };
+}
+/** Bounded historical evidence survives compaction without granting authorization. */
 export function checkpointSummary(session: Session) {
   const task = session.task;
+  const decisions = savedDecisions(session).map((item) => ({
+    question: item.question?.slice(0, 200),
+    answer: item.answer.slice(0, 240),
+    description: item.description?.slice(0, 240),
+  }));
+  const deniedActions = savedDenials(session).map((item) => ({
+    tool: item.tool,
+    receipt: item.receipt.slice(0, 160),
+  }));
+  const continuity = {
+    phase: session.checkpoint?.phase,
+    plan: task?.steps?.map((step) => ({
+      title: step.title.slice(0, 120),
+      expectedEvidence: step.expectedEvidence.slice(0, 200),
+    })),
+    decisions: decisions.slice(-6),
+    deniedActions: deniedActions.slice(-8),
+    historyLimited: decisions.length > 6 || deniedActions.length > 8,
+    failedChecks: task?.validations
+      .filter((result) => ['failed', 'unavailable', 'declined'].includes(result.status))
+      .slice(-4)
+      .map((result) => ({
+        recipe: result.recipe,
+        status: result.status,
+        fingerprint: result.fingerprint,
+        outputExcerpt: result.output.slice(0, 240),
+      })),
+  };
   const pending: string[] = [];
   for (const message of session.messages) {
     if (message.toolCalls) pending.push(...message.toolCalls.map((call) => call.function.name));
@@ -43,8 +133,10 @@ export function checkpointSummary(session: Session) {
       }
     });
   const evidence = {
+    ...continuity,
     goal: task?.goal,
     constraints: task?.constraints,
+    outOfScope: task?.outOfScope,
     criteria: task?.criteria.map((item) => ({
       description: item.description,
       accepted: !!task?.fingerprint && item.acceptedFingerprint === task.fingerprint,
@@ -66,14 +158,31 @@ export function checkpointSummary(session: Session) {
   };
   const serialized = JSON.stringify(evidence);
   if (serialized.length <= 12000) return serialized;
+  const fallback = {
+    ...continuity,
+    goal: task?.goal?.slice(0, 1200),
+    constraints: task?.constraints.map((text) => text.slice(0, 180)),
+    outOfScope: task?.outOfScope.map((text) => text.slice(0, 180)),
+    criteria: task?.criteria.map((item) => ({
+      description: item.description.slice(0, 180),
+      accepted: !!task.fingerprint && item.acceptedFingerprint === task.fingerprint,
+    })),
+    truncated: true,
+    instruction:
+      evidence.instruction +
+      ' Some fields are excerpts. Use read_task_memory to recover full constraints, decisions, plan and checks before acting on omitted details or claiming completion.',
+    validations: evidence.validations?.slice(-4),
+    changes: evidence.changes?.slice(-8),
+    interruptedCalls: pending.slice(-20),
+  };
+  // Bound the saved checkpoint even when every contract field is near its schema limit.
+  if (JSON.stringify(fallback).length <= 12000) return JSON.stringify(fallback);
   return JSON.stringify({
     goal: task?.goal?.slice(0, 1200),
     truncated: true,
     instruction:
-      evidence.instruction +
-      ' Full task criteria and receipts remain in session history. Read those before making a completion claim.',
-    validations: evidence.validations,
-    changes: evidence.changes,
+      'Call read_task_memory to recover constraints, outOfScope, criteria, steps, decisions, deniedActions and validations before proceeding. This summary exceeded its storage budget. Never infer that omitted checks passed or denied actions became allowed.',
+    phase: continuity.phase,
     interruptedCalls: pending.slice(-20),
   });
 }

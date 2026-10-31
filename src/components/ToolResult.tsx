@@ -147,11 +147,21 @@ export function presentToolResult(message: Message): Presentation {
       tone: skipped ? 'warning' : 'success',
       icon: skipped ? <CircleDashed size={15} /> : <Sparkles size={15} />,
       metrics: [
+        count(value.steps) !== undefined ? `${count(value.steps)} steps` : '',
         count(value.criteria) !== undefined ? `${count(value.criteria)} criteria` : '',
         count(value.requiredChecks) !== undefined ? `${count(value.requiredChecks)} checks` : '',
       ].filter(Boolean),
     };
   }
+  if (name === 'read_task_memory')
+    return {
+      ...base,
+      title: 'Task context restored',
+      summary: asText(value.section),
+      tone: 'success',
+      icon: <Files size={15} />,
+      metrics: value.nextOffset === null ? ['Section complete'] : ['More context available'],
+    };
   if (['read_file', 'read_files'].includes(name))
     return {
       ...base,

@@ -9,6 +9,9 @@ const native = async (): Promise<never> => {
   throw new Error('Open the Electron app with npm run dev to use local files and models.');
 };
 export const api: ForgeAPI = window.forge ?? {
+  speechStatus: native,
+  transcribeSpeech: native,
+  cancelSpeech: native,
   state: async () => ({
     settings: DEFAULT_SETTINGS,
     workspace: null,

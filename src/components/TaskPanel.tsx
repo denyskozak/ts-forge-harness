@@ -142,6 +142,19 @@ export function TaskPanel({
           </span>
         </div>
 
+        {!!task.steps?.length && (
+          <details className="task-section">
+            <summary>Plan · {task.steps.length} steps</summary>
+            <ol>
+              {task.steps.map((step, index) => (
+                <li key={index}>
+                  <strong>{step.title}</strong>
+                  <p>{step.expectedEvidence}</p>
+                </li>
+              ))}
+            </ol>
+          </details>
+        )}
         {!!checks.length && (
           <section className="task-section">
             <header>

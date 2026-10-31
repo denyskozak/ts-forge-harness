@@ -474,6 +474,28 @@ export default function App() {
   const activeModel = models.find((m) => m.name === state.settings.model);
   return (
     <div className="app-shell">
+      <nav className="activity-rail" aria-label="Application navigation">
+        {NAV.map((item) => (
+          <button
+            key={item.id}
+            title={item.label}
+            aria-label={item.label}
+            aria-current={page === item.id ? 'page' : undefined}
+            onClick={() => setPage(item.id)}
+          >
+            <item.icon size={22} />
+          </button>
+        ))}
+        <button
+          className="rail-settings"
+          title="Settings"
+          aria-label="Settings"
+          aria-current={page === 'settings' ? 'page' : undefined}
+          onClick={() => setPage('settings')}
+        >
+          <Settings2 size={22} />
+        </button>
+      </nav>
       <aside className="sidebar">
         <div className="window-space" />
         <div className="brand">
@@ -538,28 +560,43 @@ export default function App() {
             </button>
           </div>
         )}
-        <nav>
-          {NAV.map((item) => (
+        <div className="project-tree">
+          {sessions.map((session) => (
             <button
-              key={item.id}
-              className={`nav-item ${page === item.id ? 'active' : ''}`}
-              onClick={() => setPage(item.id)}
+              key={session.id}
+              className={`session-link ${session.id === sessionId ? 'selected' : ''}`}
+              title={session.title}
+              disabled={busy}
+              onClick={() => loadSession(session)}
             >
-              <item.icon size={18} />
-              <span>{item.label}</span>
-              {item.id === 'training' ? <span className="nav-new">LAB</span> : null}
+              {session.title}
             </button>
           ))}
-        </nav>
-        <div className="sidebar-spacer" />
-        <div className="sidebar-bottom">
-          <button
-            className={`nav-item ${page === 'settings' ? 'active' : ''}`}
-            onClick={() => setPage('settings')}
-          >
-            <Settings2 size={17} />
-            <span>Settings</span>
-          </button>
+          <div className="projects-heading">
+            <span>Projects</span>
+            <button
+              title="Open project"
+              aria-label="Open project"
+              disabled={busy}
+              onClick={openWorkspace}
+            >
+              <Plus size={16} />
+            </button>
+          </div>
+          {state.workspaces
+            .filter((item) => !item.active)
+            .map((item) => (
+              <button
+                key={item.path}
+                className="tree-project"
+                title={item.path}
+                disabled={busy || analyzing}
+                onClick={() => selectWorkspace(item.path)}
+              >
+                <FolderOpen size={18} />
+                <span>{item.name}</span>
+              </button>
+            ))}
         </div>
       </aside>
       <div className="main-shell">
@@ -826,7 +863,7 @@ export default function App() {
                           void run();
                         }
                       }}
-                      placeholder={nextStepSuggestion || 'What would you like to build?'}
+                      placeholder={nextStepSuggestion || 'Work with Forge'}
                       aria-label="Message Forge"
                       aria-describedby={
                         nextStepSuggestion && !prompt ? 'next-step-keyboard-hint' : undefined
@@ -840,6 +877,7 @@ export default function App() {
                       </button>
                       <div className="composer-right">
                         <VoiceInput
+                          key={`${state.workspace?.path ?? ''}:${sessionId ?? 'new'}`}
                           language={state.settings.speechLanguage}
                           disabled={busy}
                           onLanguageChange={(speechLanguage) => {

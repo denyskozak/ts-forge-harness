@@ -1,49 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import type { SpeechLanguage } from '../../shared/types';
-
-type RecognitionResultEvent = Event & {
-  resultIndex: number;
-  results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
-};
-type RecognitionErrorEvent = Event & { error: string; message?: string };
-type LocalSpeechRecognition = EventTarget & {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  processLocally: boolean;
-  onresult: ((event: RecognitionResultEvent) => void) | null;
-  onerror: ((event: RecognitionErrorEvent) => void) | null;
-  onend: (() => void) | null;
-  start(): void;
-  stop(): void;
-  abort(): void;
-};
-type SpeechRecognitionConstructor = {
-  new (): LocalSpeechRecognition;
-  available?: (options: {
-    langs: string[];
-    processLocally: boolean;
-    quality?: 'dictation';
-  }) => Promise<string>;
-  install?: (options: {
-    langs: string[];
-    processLocally: boolean;
-    quality?: 'dictation';
-  }) => Promise<boolean>;
-};
-
-const speechConstructor = () =>
-  (
-    globalThis as typeof globalThis & {
-      SpeechRecognition?: SpeechRecognitionConstructor;
-      webkitSpeechRecognition?: SpeechRecognitionConstructor;
-    }
-  ).SpeechRecognition ??
-  (
-    globalThis as typeof globalThis & {
-      webkitSpeechRecognition?: SpeechRecognitionConstructor;
-    }
-  ).webkitSpeechRecognition;
+import { api } from '../api';
+import { recordingToWav } from '../voice-audio';
 
 export function useVoiceInput({
   language,
@@ -55,16 +13,18 @@ export function useVoiceInput({
   onError: (message: string) => void;
 }) {
   const [state, setState] = useState<'idle' | 'starting' | 'listening' | 'stopping'>('idle');
-  const recognitionRef = useRef<LocalSpeechRecognition | undefined>(undefined);
   const streamRef = useRef<MediaStream | undefined>(undefined);
   const audioRef = useRef<AudioContext | undefined>(undefined);
   const animationRef = useRef<number | undefined>(undefined);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const recorderRef = useRef<MediaRecorder | undefined>(undefined);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const transcriptRef = useRef('');
-  const interimRef = useRef('');
-  const stoppingRef = useRef(false);
-
+  const generation = useRef(0);
+  const busy = useRef(false);
+  const callbacks = useRef({ onTranscript, onError });
+  callbacks.current = { onTranscript, onError };
   const stopVisualization = useCallback(() => {
+    clearTimeout(timerRef.current);
     if (animationRef.current) cancelAnimationFrame(animationRef.current);
     animationRef.current = undefined;
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -72,18 +32,6 @@ export function useVoiceInput({
     void audioRef.current?.close().catch(() => {});
     audioRef.current = undefined;
   }, []);
-
-  const finish = useCallback(() => {
-    stopVisualization();
-    recognitionRef.current = undefined;
-    const transcript = `${transcriptRef.current} ${interimRef.current}`.trim();
-    transcriptRef.current = '';
-    interimRef.current = '';
-    stoppingRef.current = false;
-    setState('idle');
-    if (transcript) onTranscript(transcript);
-  }, [onTranscript, stopVisualization]);
-
   const drawWaveform = useCallback((analyser: AnalyserNode) => {
     const canvas = canvasRef.current;
     if (!canvas) {
@@ -120,101 +68,97 @@ export function useVoiceInput({
   }, []);
 
   const start = useCallback(async () => {
-    const Recognition = speechConstructor();
-    if (!Recognition) {
-      onError('On-device speech recognition is not available in this Electron build.');
-      return;
-    }
-    // Chromium's downloadable local pack is reliably published for en-US, while
-    // navigator.language may resolve to a regional variant such as en-GB that
-    // the embedded runtime cannot install.
-    const lang = language === 'auto' ? 'en-US' : language;
+    if (busy.current) return;
+    busy.current = true;
+    const token = ++generation.current;
     setState('starting');
     try {
-      let availability = Recognition.available
-        ? await Recognition.available({
-            langs: [lang],
-            processLocally: true,
-            quality: 'dictation',
-          })
-        : 'available';
-      if (['downloadable', 'downloading'].includes(availability) && Recognition.install) {
-        const installed = await Recognition.install({
-          langs: [lang],
-          processLocally: true,
-          quality: 'dictation',
-        });
-        if (installed)
-          availability = Recognition.available
-            ? await Recognition.available({
-                langs: [lang],
-                processLocally: true,
-                quality: 'dictation',
-              })
-            : 'available';
-      }
-      if (availability !== 'available')
-        throw new Error(
-          `Local ${lang} dictation could not start (${availability}). The language pack may still be downloading.`,
-        );
+      const status = await api.speechStatus();
+      if (token !== generation.current) return;
+      if (!status.ready)
+        throw new Error(status.error || 'Local speech recognition is not configured.');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      if (token !== generation.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      streamRef.current = stream;
       const audio = new AudioContext();
+      audioRef.current = audio;
       const analyser = audio.createAnalyser();
       analyser.fftSize = 128;
       analyser.smoothingTimeConstant = 0.72;
       audio.createMediaStreamSource(stream).connect(analyser);
-      streamRef.current = stream;
-      audioRef.current = audio;
+      await audio.resume();
+      if (token !== generation.current) return;
       drawWaveform(analyser);
-
-      const recognition = new Recognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = lang;
-      recognition.processLocally = true;
-      recognition.onresult = (event) => {
-        let interim = '';
-        for (let index = event.resultIndex; index < event.results.length; index++) {
-          const result = event.results[index];
-          if (result.isFinal) transcriptRef.current += `${result[0].transcript} `;
-          else interim += result[0].transcript;
+      const recorder = new MediaRecorder(stream);
+      recorderRef.current = recorder;
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size) chunks.push(event.data);
+      };
+      recorder.onerror = () => {
+        generation.current++;
+        busy.current = false;
+        stopVisualization();
+        setState('idle');
+        callbacks.current.onError('Microphone recording failed. Please try again.');
+      };
+      recorder.onstop = async () => {
+        if (token !== generation.current) return;
+        stopVisualization();
+        setState('stopping');
+        try {
+          const wav = await recordingToWav(new Blob(chunks, { type: recorder.mimeType }));
+          if (token !== generation.current) return;
+          const text = await api.transcribeSpeech(wav, language);
+          if (token !== generation.current) return;
+          if (text.trim()) callbacks.current.onTranscript(text);
+          else callbacks.current.onError('No speech was detected. Please try again.');
+        } catch (error) {
+          if (token === generation.current) callbacks.current.onError((error as Error).message);
+        } finally {
+          if (token === generation.current) {
+            busy.current = false;
+            recorderRef.current = undefined;
+            setState('idle');
+          }
         }
-        interimRef.current = interim;
       };
-      recognition.onerror = (event) => {
-        if (stoppingRef.current && event.error === 'aborted') return;
-        onError(
-          event.error === 'no-speech'
-            ? 'No speech was detected.'
-            : `Voice recognition failed: ${event.message || event.error}.`,
-        );
-      };
-      recognition.onend = finish;
-      recognitionRef.current = recognition;
-      recognition.start();
+      recorder.start(1000);
       setState('listening');
+      timerRef.current = setTimeout(() => {
+        if (recorder.state === 'recording') recorder.stop();
+      }, 120000);
     } catch (error) {
-      stopVisualization();
-      setState('idle');
-      onError((error as Error).message);
+      if (token === generation.current) {
+        stopVisualization();
+        busy.current = false;
+        setState('idle');
+        callbacks.current.onError((error as Error).message);
+      }
     }
-  }, [drawWaveform, finish, language, onError, stopVisualization]);
-
+  }, [drawWaveform, language, stopVisualization]);
   const stop = useCallback(() => {
-    if (!recognitionRef.current) return;
-    stoppingRef.current = true;
+    if (recorderRef.current?.state !== 'recording') return;
     setState('stopping');
-    recognitionRef.current.stop();
+    recorderRef.current.stop();
   }, []);
-
   useEffect(
     () => () => {
-      recognitionRef.current?.abort();
+      generation.current++;
+      const recorder = recorderRef.current;
+      if (recorder) {
+        recorder.onstop = null;
+        recorder.onerror = null;
+        if (recorder.state === 'recording') recorder.stop();
+      }
       stopVisualization();
+      void api.cancelSpeech().catch(() => {});
     },
     [stopVisualization],
   );
-
   return {
     canvasRef: canvasRef as RefObject<HTMLCanvasElement>,
     state,

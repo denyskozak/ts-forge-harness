@@ -23,6 +23,7 @@ import { workspaceFingerprint, runValidation } from './validation';
 import { analyzeImpact, closeAnalysis, invalidateAnalysis } from './language-tools';
 import { Trainer, exportDataset } from './training';
 import { models, testConnection } from './provider';
+import { speechStatus, transcribeSpeech, cancelSpeech } from './speech';
 import { sshProfileSchema, testSsh } from './ssh';
 import { closeInteractiveBrowser, showInteractiveBrowser, browserOpen } from './project-runtime';
 import { mcpConnections, connectMcp, disconnectMcp, closeMcpConnections } from './mcp-client';
@@ -257,6 +258,9 @@ app
       return 'data:image/png;base64,' + (await fs.readFile(target)).toString('base64');
     });
     handle('models', () => models(store.value.settings.endpoint));
+    handle('speech-status', speechStatus);
+    handle('speech-transcribe', transcribeSpeech);
+    handle('speech-cancel', cancelSpeech);
     handle('test-connection', (endpoint, model) => {
       if (agent.busy || trainer.isRunning)
         throw new Error('Wait for the active task before testing another model.');
@@ -643,6 +647,7 @@ app.on('before-quit', (event) => {
   if (closing) return;
   event.preventDefault();
   closing = true;
+  cancelSpeech();
   agent?.stop();
   trainer?.stop();
   void (async () => {

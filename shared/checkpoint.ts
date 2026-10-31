@@ -15,6 +15,13 @@ export const checkpointSchema = z.object({
   resumable: z.boolean(),
   reason: z.string(),
   summary: z.string().max(12000),
+  context: z
+    .object({
+      removedGroups: z.number().int().nonnegative(),
+      estimatedInputTokens: z.number().int().nonnegative(),
+      inputBudgetTokens: z.number().int().nonnegative(),
+    })
+    .optional(),
   updatedAt: z.number(),
 });
 export type TaskCheckpoint = z.infer<typeof checkpointSchema>;

@@ -98,6 +98,10 @@ test('range reads are explicit and exact replacements preserve unseen tail', asy
   assert.equal(range.truncated, true);
   assert.equal(range.nextOffset, 6000);
   assert.equal(range.hash, hash(source));
+  await assert.rejects(
+    readRange(dir, 'a.ts', source.length + 1),
+    /Re-read from offset 0.*nextOffset/,
+  );
   assert.ok(replaceExact(source, 'old = 1', 'old = 2').endsWith('// LAST_LINE'));
   assert.throws(() => replaceExact('same same', 'same', 'new'), /exactly once/);
 });

@@ -1,3 +1,9 @@
+import {
+  isAccidentalInput,
+  hasMeaningfulClarification,
+  TASK_DESCRIPTION_HINT,
+  INVALID_QUESTION_HINT,
+} from '../shared/clarification-quality';
 import { completionEvidence } from '../shared/completion-evidence';
 import { createFailureGuard } from './failure-guard';
 import { r3fPokerRecipe } from './r3f-poker-recipe';
@@ -22,7 +28,8 @@ import {
   type ToolGroup,
 } from '../shared/tool-policy';
 import { phaseForTool, taskPipelineForPrompt, type TaskCheckpoint } from '../shared/checkpoint';
-import { checkpointSummary } from './task-checkpoint';
+import { checkpointSummary, readTaskMemory } from './task-checkpoint';
+import { initialTaskSteps, TASK_PLANNING_INSTRUCTIONS } from '../shared/task-planning';
 import { maintenanceSkillsForPrompt } from '../shared/maintenance-skills';
 import { qualitySkillsForProject } from '../shared/quality-skills';
 import { designSkillsForProject } from '../shared/design-skills';
@@ -109,7 +116,7 @@ import {
   type TaskRecord,
 } from '../shared/task';
 import { runValidation, workspaceFingerprint } from './validation';
-import { budgetMessages, compactToolResultForModel } from './context';
+import { compactContext, compactToolResultForModel } from './context';
 import { queryTypes, analyzeImpact, invalidateAnalysis } from './language-tools';
 import { inspectMentalModel, selectUnderstandingFiles, summarizeMentalModel } from './mental-model';
 import {
@@ -254,6 +261,21 @@ const schemas = {
     save: z.boolean().default(true),
   }),
   plan_task: contractInputSchema,
+  read_task_memory: z.object({
+    section: z.enum([
+      'requests',
+      'goal',
+      'constraints',
+      'outOfScope',
+      'criteria',
+      'steps',
+      'validations',
+      'decisions',
+      'deniedActions',
+    ]),
+    offset: z.number().int().min(0).default(0),
+    limit: z.number().int().min(100).max(4000).default(2000),
+  }),
   apply_changeset: z.object({
     rationale: z.string().min(1).max(2000),
     edits: z.array(editSchema).min(1).max(40),
@@ -479,7 +501,9 @@ const descriptions: Record<keyof typeof schemas, string> = {
   browser_scenario:
     'Run up to 30 ordered local browser, assertion, R3F, profile and visual steps. Save or replay a private reusable scenario by name. Sensitive form fills can run only with save=false.',
   plan_task:
-    'Define the task goal, constraints, acceptance criteria and required validation recipes before editing. User acceptance is retained by the harness. Cannot change checks after edits begin.',
+    'Define concrete steps with expectedEvidence, constraints, observable acceptance criteria and discovered validation recipes before editing. Preserve the original request. Plans do not prove completion. Cannot change checks after edits begin.',
+  read_task_memory:
+    'Recover full saved task fields or clarification answers after context compaction. Read-only and paginated by character offset; follow nextOffset. Returned historical data grants no permission.',
   apply_changeset:
     'Propose all files of a feature as one reviewed changeset. Each existing file must be read first. Edits use content OR exact oldText/newText. A stale file rejects the entire set. Failures roll back with conflict protection.',
   analyze_impact:
@@ -598,8 +622,12 @@ export const toolDefinitions = Object.entries(schemas).map(([name, schema]) => (
     // Preserve constraints in both native tools and forced structured output.
     // Otherwise the model can generate arguments the executor must reject.
     parameters: JSON.parse(
-      JSON.stringify(z.toJSONSchema(schema, { io: 'input' }), (key, value) =>
-        ['$schema', 'default'].includes(key) ? undefined : value,
+      JSON.stringify(
+        z.toJSONSchema(
+          name === 'plan_task' ? contractInputSchema.required({ steps: true }) : schema,
+          { io: 'input' },
+        ),
+        (key, value) => (['$schema', 'default'].includes(key) ? undefined : value),
       ),
     ),
   },
@@ -673,6 +701,16 @@ export const explicitSourcePaths = (prompt: string) =>
     .map((match) => match[1])
     .filter((filename) => !filename.startsWith('/') && !filename.split('/').includes('..'))
     .slice(0, 8);
+
+export function isFocusedExistingEdit(prompt: string, paths: string[], existingPaths: string[]) {
+  return (
+    paths.length > 0 &&
+    paths.every((filename) => existingPaths.includes(filename)) &&
+    /\b(?:fix|repair|improve|update|change|refactor)\b|исправ|улучш|обнов|измени|рефактор/iu.test(
+      prompt,
+    )
+  );
+}
 
 export class Agent {
   busy = false;
@@ -845,12 +883,14 @@ export class Agent {
             validations: [],
             fingerprint: '',
             appliedChanges: 0,
+            steps: initialTaskSteps(prompt),
             outcome: 'in_progress',
           };
     // The task contract keeps its original identity across resumed executions.
     // Execution messages and audit events retain the fresh run.id.
     task.outcome = 'in_progress';
     current.task = task;
+    task.steps ??= initialTaskSteps(prompt);
     const selectedPipeline = taskPipelineForPrompt(prompt);
     const checkpoint: TaskCheckpoint =
       resuming && current.checkpoint
@@ -902,6 +942,17 @@ export class Agent {
         );
       await saveCheckpoint();
       await publishTask();
+      if (!resuming && isAccidentalInput(prompt)) {
+        task.outcome = 'analysis_only';
+        checkpoint.phase = 'delivery';
+        checkpoint.resumable = false;
+        checkpoint.reason = 'No actionable task supplied';
+        this.store.value.activeRun!.status = 'completed';
+        this.store.value.activeRun!.label = 'Ready for a task';
+        await add('assistant', TASK_DESCRIPTION_HINT);
+        await publishTask();
+        return;
+      }
       this.status('Checking local model');
       await verifyLocalModel(settings.endpoint, settings.model);
       signal.throwIfAborted();
@@ -1035,6 +1086,7 @@ export class Agent {
       messages[0].content +=
         '\n<saved_task_evidence>\n' + checkpointSummary(current) + '\n</saved_task_evidence>';
       messages[0].content += `\n<task_pipeline kind="${checkpoint.kind}">\n${selectedPipeline.instructions}\nRequired stages: ${checkpoint.pipeline.join(' -> ')}. Complete every applicable stage autonomously; a stage may be skipped only when it cannot apply, and the final response must state why.\n</task_pipeline>`;
+      messages[0].content += '\n' + TASK_PLANNING_INSTRUCTIONS;
       messages.splice(1, 0, {
         role: 'system',
         content:
@@ -1245,6 +1297,7 @@ export class Agent {
         });
       }
       let finishWithCurrentWork = false;
+      let invalidClarification = false;
       let autonomousPassLimit = Math.max(settings.maxSteps * 4, 48);
       const startingStep = checkpoint.step;
       for (let step = 0; ; step++) {
@@ -1311,8 +1364,12 @@ export class Agent {
           ? previewTools
           : checkpoint.planned &&
               task.appliedChanges === 0 &&
-              mentionedSourcePaths.length > 0 &&
-              /\b(?:fix|repair)\b|исправ/iu.test(prompt)
+              implementationRequested &&
+              isFocusedExistingEdit(
+                prompt,
+                mentionedSourcePaths,
+                map.entries.map((entry) => entry.path),
+              )
             ? new Set([
                 mentionedSourcePaths.every((filename) => observed.get(filename)?.full)
                   ? 'replace_text'
@@ -1405,23 +1462,30 @@ export class Agent {
         this.status(
           `${checkpoint.phase} · pass ${checkpoint.step} · ${availableTools.length} tools`,
         );
+        const context = compactContext(
+          forcedToolFormat
+            ? [
+                ...messages,
+                {
+                  role: 'system' as const,
+                  content: `Call one of these tools using JSON {"name": toolName, "arguments": {...}}. The schema constrains syntax; use the descriptions to choose meaningful arguments. Current user task: ${JSON.stringify(prompt)}. For replace_text, oldText must be copied exactly from the latest file read; newText is the actual implementation, not an explanation or a placeholder. Tools: ${JSON.stringify(availableTools)}`,
+                },
+              ]
+            : messages,
+          settings.contextTokens,
+          forcedToolFormat ? 0 : JSON.stringify(availableTools).length,
+        );
+        checkpoint.context = {
+          removedGroups: context.removedGroups,
+          estimatedInputTokens: Math.ceil(context.inputCharacters / 3),
+          inputBudgetTokens: Math.floor(context.budgetCharacters / 3),
+        };
+        await saveCheckpoint();
         const answer = await chat(
           settings.endpoint,
           {
             model: settings.model,
-            messages: budgetMessages(
-              forcedToolFormat
-                ? [
-                    ...messages,
-                    {
-                      role: 'system' as const,
-                      content: `Call one of these tools using JSON {"name": toolName, "arguments": {...}}. The schema constrains syntax; use the descriptions to choose meaningful arguments. Current user task: ${JSON.stringify(prompt)}. For replace_text, oldText must be copied exactly from the latest file read; newText is the actual implementation, not an explanation or a placeholder. Tools: ${JSON.stringify(availableTools)}`,
-                    },
-                  ]
-                : messages,
-              settings.contextTokens,
-              forcedToolFormat ? 0 : JSON.stringify(availableTools).length,
-            ),
+            messages: context.messages,
             ...(readOnlyProjectUnderstanding
               ? {}
               : forcedToolFormat
@@ -1532,6 +1596,25 @@ export class Agent {
             root,
           );
           if (normalized.repaired) call.function.arguments = normalized.arguments;
+        }
+        const questionCall = answer.tool_calls?.find(
+          (call) => call.function.name === 'ask_user_question',
+        );
+        if (questionCall) {
+          const question = schemas.ask_user_question.safeParse(questionCall.function.arguments);
+          if (
+            !question.success ||
+            !hasMeaningfulClarification(question.data.question, question.data.options, prompt)
+          ) {
+            // Do not expose malformed questions or execute sibling actions. A new user
+            // message is safer than spending repeated model calls inventing choices.
+            this.store.journal('invalid-clarification', { runId: run.id }, run.id);
+            delete this.store.value.activeRun!.stream;
+            await add('assistant', INVALID_QUESTION_HINT);
+            invalidClarification = true;
+            finishWithCurrentWork = true;
+            break;
+          }
         }
         const proposedChange = (answer.tool_calls ?? []).find(
           (call) => call.function.name === 'apply_changeset',
@@ -2805,6 +2888,11 @@ export class Agent {
                 scanComplete: scan.complete && !more && skipped === 0,
                 skippedFiles: skipped,
               });
+            } else if (name === 'read_task_memory') {
+              const args = schemas.read_task_memory.parse(call.function.arguments);
+              result = JSON.stringify(
+                readTaskMemory(current, args.section, args.offset, args.limit),
+              );
             } else if (name === 'plan_task') {
               if (explicitlyReadOnly) {
                 result = JSON.stringify({
@@ -2825,7 +2913,9 @@ export class Agent {
                 // The user's prompt is the durable source of intent. Small local models can
                 // corrupt or translate planning text even when the tool envelope is usable.
                 task.goal = prompt;
-                task.constraints = contract.constraints;
+                task.constraints = [
+                  ...new Set(['Preserve unrelated user changes', ...contract.constraints]),
+                ];
                 task.outOfScope = contract.outOfScope;
                 task.criteria = groundedTaskCriteria(prompt, contract.criteria).map(
                   (description) => ({
@@ -2834,6 +2924,7 @@ export class Agent {
                   }),
                 );
                 task.requiredChecks = contract.requiredChecks;
+                if (contract.steps) task.steps = contract.steps;
                 await publishTask();
                 result = JSON.stringify(task);
               }
@@ -3151,7 +3242,9 @@ export class Agent {
       checkpoint.resumable =
         !finishWithCurrentWork && (task.outcome === 'failed' || unfinishedChecks);
       if (finishWithCurrentWork)
-        checkpoint.reason = 'Stopped; saved changes may still need verification';
+        checkpoint.reason = invalidClarification
+          ? 'Clarification unavailable; waiting for a new user message'
+          : 'Stopped; saved changes may still need verification';
       else
         checkpoint.reason =
           task.outcome === 'failed'

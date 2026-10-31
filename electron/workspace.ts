@@ -98,7 +98,10 @@ export async function readText(root: string, relative: string) {
 export async function readRange(root: string, relative: string, offset = 0, limit = 12000) {
   const text = await readText(root, relative),
     end = Math.min(text.length, offset + limit);
-  if (offset > text.length) throw new Error('Offset exceeds file length.');
+  if (offset > text.length)
+    throw new Error(
+      `Offset ${offset} exceeds file length (${text.length} characters). Re-read from offset 0; paginate only using nextOffset from a successful read, and stop when nextOffset is null.`,
+    );
   return {
     path: relative,
     hash: hash(text),

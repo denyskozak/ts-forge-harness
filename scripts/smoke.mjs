@@ -261,71 +261,6 @@ try {
     }),
     true,
   );
-  await page.evaluate(() => {
-    class FakeSpeechRecognition extends EventTarget {
-      static checks = 0;
-      static async available(options) {
-        globalThis.__speechAvailabilityOptions = options;
-        return this.checks++ === 0 ? 'downloadable' : 'available';
-      }
-      static async install(options) {
-        globalThis.__speechInstallOptions = options;
-        return true;
-      }
-      continuous = false;
-      interimResults = false;
-      lang = '';
-      processLocally = false;
-      onresult = null;
-      onerror = null;
-      onend = null;
-      start() {
-        globalThis.__speechRecognitionStarted = {
-          lang: this.lang,
-          processLocally: this.processLocally,
-        };
-        setTimeout(
-          () =>
-            this.onresult?.({
-              resultIndex: 0,
-              results: [{ 0: { transcript: 'voice transcript' }, isFinal: true }],
-            }),
-          0,
-        );
-      }
-      stop() {
-        this.onend?.();
-      }
-      abort() {}
-    }
-    Object.defineProperty(globalThis, 'SpeechRecognition', {
-      configurable: true,
-      value: FakeSpeechRecognition,
-    });
-    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
-      configurable: true,
-      value: async () => ({ getTracks: () => [{ stop() {} }] }),
-    });
-    Object.defineProperty(globalThis, 'AudioContext', {
-      configurable: true,
-      value: class {
-        createAnalyser() {
-          return {
-            fftSize: 128,
-            smoothingTimeConstant: 0,
-            frequencyBinCount: 64,
-            getByteFrequencyData(values) {
-              values.fill(80);
-            },
-          };
-        }
-        createMediaStreamSource() {
-          return { connect() {} };
-        }
-        async close() {}
-      },
-    });
-  });
   const voiceLanguage = page.getByRole('combobox', { name: 'Voice language' });
   await expect(voiceLanguage).toHaveValue('auto');
   assert.equal(await voiceLanguage.locator('option').count(), 9);
@@ -333,25 +268,7 @@ try {
   await expect
     .poll(async () => (await page.evaluate(() => window.forge.state())).settings.speechLanguage)
     .toBe('es-ES');
-  await page.getByRole('button', { name: 'Start voice input' }).click();
-  await page.getByRole('status', { name: 'Voice input active' }).waitFor();
-  assert.deepEqual(
-    await page.evaluate(() => ({
-      available: globalThis.__speechAvailabilityOptions,
-      install: globalThis.__speechInstallOptions,
-      started: globalThis.__speechRecognitionStarted,
-    })),
-    {
-      available: { langs: ['es-ES'], processLocally: true, quality: 'dictation' },
-      install: { langs: ['es-ES'], processLocally: true, quality: 'dictation' },
-      started: { lang: 'es-ES', processLocally: true },
-    },
-  );
-  await page.screenshot({ path: 'docs/forge-voice.png' });
-  await page.getByRole('button', { name: 'Stop voice input' }).click();
-  await expect(page.getByRole('textbox', { name: 'Message Forge' })).toHaveValue(
-    'voice transcript',
-  );
+  // Real recording and whisper.cpp inference are covered by test:voice-live.
   await voiceLanguage.selectOption('auto');
   await page.getByRole('textbox', { name: 'Message Forge' }).fill('');
   await page.screenshot({ path: 'docs/forge-preview.png' });
