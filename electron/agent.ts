@@ -1,4 +1,10 @@
 import {
+  PRODUCT_GUARDRAILS,
+  requestPolicyViolation,
+  assertSupportedArtifact,
+  ProductPolicyError,
+} from '../shared/product-guardrails';
+import {
   isAccidentalInput,
   hasMeaningfulClarification,
   TASK_DESCRIPTION_HINT,
@@ -812,6 +818,9 @@ export class Agent {
     run.status = 'running';
     delete run.clarification;
     await this.store.save();
+    const violation =
+      answer && requestPolicyViolation(`${answer.label} ${answer.description ?? ''}`);
+    if (violation) throw new ProductPolicyError(violation);
     return answer;
   }
   async resume(sessionId: string) {
@@ -953,6 +962,17 @@ export class Agent {
         await publishTask();
         return;
       }
+      const policyViolation = requestPolicyViolation(prompt);
+      if (policyViolation) {
+        task.outcome = 'analysis_only';
+        checkpoint.phase = 'delivery';
+        checkpoint.resumable = false;
+        checkpoint.reason = 'Request outside product policy';
+        this.store.value.activeRun!.status = 'completed';
+        await add('assistant', policyViolation);
+        await publishTask();
+        return;
+      }
       this.status('Checking local model');
       await verifyLocalModel(settings.endpoint, settings.model);
       signal.throwIfAborted();
@@ -1086,7 +1106,7 @@ export class Agent {
       messages[0].content +=
         '\n<saved_task_evidence>\n' + checkpointSummary(current) + '\n</saved_task_evidence>';
       messages[0].content += `\n<task_pipeline kind="${checkpoint.kind}">\n${selectedPipeline.instructions}\nRequired stages: ${checkpoint.pipeline.join(' -> ')}. Complete every applicable stage autonomously; a stage may be skipped only when it cannot apply, and the final response must state why.\n</task_pipeline>`;
-      messages[0].content += '\n' + TASK_PLANNING_INSTRUCTIONS;
+      messages[0].content += '\n' + TASK_PLANNING_INSTRUCTIONS + '\n' + PRODUCT_GUARDRAILS;
       messages.splice(1, 0, {
         role: 'system',
         content:
@@ -1397,9 +1417,15 @@ export class Agent {
         nextWholeFileRecoveryPath = undefined;
         nextPassTools = undefined;
         nextPassRequiresTool = false;
-        const availableNames = restriction
-          ? new Set([...enabledNames].filter((name) => restriction.has(name)))
-          : enabledNames;
+        const availableNames = this.actionDeclined
+          ? new Set(
+              [...enabledNames].filter((name) =>
+                ['read_file', 'read_files', 'list_files', 'read_task_memory'].includes(name),
+              ),
+            )
+          : restriction
+            ? new Set([...enabledNames].filter((name) => restriction.has(name)))
+            : enabledNames;
         const availableTools = readOnlyProjectUnderstanding
           ? []
           : toolDefinitions
@@ -3000,6 +3026,7 @@ export class Agent {
                 }
                 if (existed && before === after)
                   throw new Error('No-op edit does not count as an applied change.');
+                assertSupportedArtifact(args.path, after);
                 prepared.push({
                   id: randomUUID(),
                   path: path.normalize(args.path),
@@ -3114,6 +3141,7 @@ export class Agent {
               throw new Error('Unknown tool.');
             }
           } catch (error) {
+            if (error instanceof ProductPolicyError) throw error;
             result = `Tool error: ${(error as Error).message}`;
             if (/relative workspace path|outside the allowed workspace/.test(result))
               result += ` Use an exact relative path from read_file/list_files. Previously read paths: ${JSON.stringify([...observed.keys()].slice(0, 30))}. No file was changed. Do not repeat the rejected path.`;
@@ -3264,7 +3292,7 @@ export class Agent {
         ? 'Run stopped. Approved changes are retained with checkpoints.'
         : (error as Error).message;
       task.outcome = signal.aborted ? 'stopped' : 'failed';
-      checkpoint.resumable = true;
+      checkpoint.resumable = !(error instanceof ProductPolicyError);
       checkpoint.reason = signal.aborted ? 'Stopped by user' : message.slice(0, 500);
       this.store.value.activeRun!.status = signal.aborted ? 'stopped' : 'failed';
       await add('assistant', message).catch(() => {});
