@@ -6,6 +6,7 @@
     "scripts/evaluate.mts",
     "scripts/acceptance.ts",
     "src/api.ts",
-    "scripts/evaluate-continuity.mts"
+    "scripts/evaluate-continuity.mts",
+    "scripts/evaluate-guardrails.mts"
   ]
 }

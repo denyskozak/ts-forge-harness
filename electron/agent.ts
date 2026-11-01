@@ -1,5 +1,7 @@
 import {
   PRODUCT_GUARDRAILS,
+  requestsReadOnly,
+  READ_ONLY_AUDIT_TOOLS,
   requestPolicyViolation,
   assertSupportedArtifact,
   ProductPolicyError,
@@ -1112,14 +1114,12 @@ export class Agent {
         content:
           'Defaults for new projects: TypeScript and pnpm. For an empty workspace and a new-project request, inspect project_templates and product_recipes, then use scaffold_project when a supported base matches. For an existing project, edit through apply_changeset. For T3 or data work call product_architecture before editing; trace tRPC procedures to callers and React Query consumers, and inspect Prisma/Drizzle models, indexes and migrations. Treat every migration containing DROP, TRUNCATE or broad DELETE as destructive and keep it in a separate reviewed changeset from ordinary source edits. Use api_contracts before changing an OpenAPI, tRPC or HTTP boundary. Discover package scripts before starting one. After implementation, run relevant checks, start the real dev process when useful, open its returned loopback URL with browser_open, and use browser_snapshot/click/fill/press/screenshot to verify observable behavior. Use package_dependencies for explicit dependency changes. Inspect Git freely, but create branches, stage, commit or push only when the user requested Git delivery. Do not ask the user to reconfirm requested file creation or ask whether to continue. Continue autonomously through implementation, repair, validation, preview and delivery. An implementation request requires real file edits or a successful scaffold and validation. Questions are only for critical missing decisions and must contain exactly three mutually exclusive choices; the interface adds a fourth custom-answer choice. On a tool schema error, repair the arguments and call the same tool instead of printing JSON or inventing a tool name.',
       });
-      const implementationRequested =
-        requestsProjectChange(prompt) && !readOnlyProjectUnderstanding;
-      const explicitlyReadOnly =
-        readOnlyProjectUnderstanding ||
-        (!implementationRequested &&
-          /\bread[- ]only\b|only use read tools|keep (?:every|all) files? unchanged|без изменени|не (?:изменя|меня|редактиру)й|только чтени/iu.test(
-            prompt,
-          ));
+      const explicitlyReadOnly = readOnlyProjectUnderstanding || requestsReadOnly(prompt);
+      const readOnlyAudit = explicitlyReadOnly && /\baudit\b|аудит/iu.test(prompt);
+      const implementationRequested = requestsProjectChange(prompt) && !explicitlyReadOnly;
+      if (readOnlyAudit)
+        messages[0].content +=
+          '\nThis is a read-only security audit. Read relevant source, then report findings and recommendations. Do not plan implementation, modify files or run commands.';
       const previewVerificationRequested =
         (explicitlyReadOnly || implementationRequested) &&
         /(?:pnpm\s+dev|dev(?:elopment)?\s+server|loopback|встроенн\w*\s+браузер|открой\w*\s+.*браузер|запусти\w*\s+.*(?:проект|приложен)|проверь\w*\s+.*браузер)/iu.test(
@@ -1371,6 +1371,10 @@ export class Agent {
         const enabledNames = readOnlyProjectUnderstanding
           ? new Set<string>()
           : allowedToolNames(groups, settings.webSearch.enabled);
+        if (readOnlyAudit) {
+          for (const name of enabledNames)
+            if (!READ_ONLY_AUDIT_TOOLS.has(name)) enabledNames.delete(name);
+        }
         const webTool = nextWebResearchTool(
           prompt,
           current.messages,
@@ -2228,6 +2232,10 @@ export class Agent {
                 'Per-step execution limit reached. Retry remaining calls in the next step.',
               );
             if (!Object.hasOwn(schemas, name)) throw new Error('Unknown tool.');
+            if (readOnlyAudit && !READ_ONLY_AUDIT_TOOLS.has(name))
+              throw new Error(
+                'Read-only audit: use source inspection tools and report findings without changes.',
+              );
             if (!availableNames.has(name))
               throw new Error(
                 'Tool is not loaded. Call enable_tool_group for the required capability first.',
@@ -3257,7 +3265,7 @@ export class Agent {
           ? 'failed'
           : task.appliedChanges
             ? taskOutcome(task)
-            : readOnlyProjectUnderstanding
+            : explicitlyReadOnly
               ? 'analysis_only'
               : 'completed_unverified';
       const evidence = completionEvidence(task);

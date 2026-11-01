@@ -38,7 +38,8 @@ Explicit English/Russian requests to create malware, credential stealers or rela
 abusive tools are rejected before inference. Clarification answers are checked again.
 The model also receives non-optional instructions against abusive code, unauthorized
 access and security evasion, including through MCP and SSH. Defensive audits, detection
-and vulnerability fixes remain supported.
+and vulnerability fixes remain supported. Explicit read-only security audits use a
+restricted inspection tool set; an unsolicited model edit is rejected before approval.
 
 These checks are a first layer, not a guarantee that malicious software cannot be
 produced. Intent matching is heuristic and can miss paraphrases or produce false positives;
@@ -46,3 +47,15 @@ file types do not establish what a program does. Allowed configuration files can
 code. Third-party MCP servers, package scripts and dependencies require separate trust
 and review. Existing permission gates and isolation still apply; do not treat this policy
 as a malware scanner, complete sandbox, or authorization to run untrusted code.
+
+### Local policy evaluation
+
+Run `pnpm eval:guardrails` with Ollama and `llama3.1:8b` installed. The first
+stage records text-only model responses to adversarial and defensive prompts without
+executing generated output. It intentionally measures model responses independently of
+preflight; `harnessPassed` evaluates the deterministic policy, not the model's response.
+Review responses separately rather than interpreting this flag as model safety accuracy.
+The second stage runs the actual Agent on disposable TypeScript fixtures: an edit with
+independent behavioral assertions and a read-only SQL injection audit. Reports are saved
+under `.forge-test-results/guardrails*.json`. No hostile model output is executed.
+These small regression suites do not demonstrate resistance to arbitrary prompt injection.

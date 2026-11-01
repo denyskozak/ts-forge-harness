@@ -7,7 +7,7 @@ const normalize = (text: string) =>
     .replace(/[\u200b-\u200f\u2060\ufeff]/gu, '')
     .toLowerCase();
 const creation =
-  /\b(?:build|create|write|implement|develop|deploy|improve|make|generate|steal|exfiltrate|harvest|bypass|evade)\b|напиш|созда|сдела|разработ|улучш|реализ|задеплой|укради|обойди/iu;
+  /\b(?:build|create|write|implement|develop|deploy|improve|make|generate|need|want|provide|steal|exfiltrate|harvest|bypass|evade)\b|напиш|созда|сдела|разработ|улучш|реализ|задеплой|нужен|нужна|нужно|хочу|укради|обойди/iu;
 const harmful =
   /\b(?:ransomware|keylogger|infostealer|credential[- ]stealer|cookie[- ]stealer|botnet|malware)\b|стилер|кейлоггер|шифровальщик|вымогател|вредоносн/iu;
 const abuse =
@@ -19,11 +19,24 @@ export function requestPolicyViolation(prompt: string): string | undefined {
   for (const clause of text.split(/[\n;.!?]+/u)) {
     const objective = clause
       .replace(
-        /\b(?:detect|identify|remove|block|prevent|analyze|detector for|scanner for) (?:malware|ransomware|keyloggers?|infostealers?)\b/gu,
+        /\b(?:audit|security|analysis) report (?:about|on) (?:malware|ransomware|keylogger) risks\b/gu,
+        'defensive report',
+      )
+      // Remove explicit prohibitions, not an entire defensive preface.
+      .replace(
+        /\b(?:do not|never|don’t|don't) (?:create|write|build|implement) (?:malware|ransomware|a keylogger)\b/gu,
+        'prohibition',
+      )
+      .replace(
+        /\b(?:detect|identify|remove|block|prevent|analyze|audit|detector for|scanner for) (?:malware|ransomware|keyloggers?|infostealers?)\b/gu,
         'defensive detection',
       )
       .replace(
         /\b(?:malware|ransomware|keylogger|infostealer) (?:detector|detection|scanner|removal)\b/gu,
+        'defensive detection',
+      )
+      .replace(
+        /\b(?:prevent|detect|block) (?:credential theft|password theft|cookie theft|stealing (?:passwords|credentials|cookies|tokens))\b/gu,
         'defensive detection',
       )
       .replace(
@@ -34,14 +47,17 @@ export function requestPolicyViolation(prompt: string): string | undefined {
       return 'TS Forge cannot help create malware, steal credentials, evade security controls, or attack systems. I can help with defensive analysis, detection and fixes in a TypeScript project.';
   }
   const otherStack =
-    /(?:\b(?:build|create|write|implement|develop)\b|напиш|созда|сдела|разработ|реализ)[\s\S]{0,100}(?:\b(?:in|using|with)\s+|на\s+)(?:python|django|flask|golang|go|rust|java(?!script)|javascript|php|ruby|rails|c\+\+|c#|kotlin|swift|питон|пайтон|джава|джаваскрипт)(?:\b|\s|$)/iu;
-  if (
-    otherStack.test(text) &&
-    !/\b(?:migrate|migration|convert|port)\b.{0,100}\b(?:to|into) typescript\b|(?:перенес|перевед|мигрир).{0,100}(?:на|в) typescript/iu.test(
-      text,
+    /(?:\b(?:build|create|write|implement|develop|make|generate|need|want)\b|напиш\w*|созда\w*|сдела\w*|разработ\w*|реализ\w*|нужен|нужна|хочу)(?:\s+(?:a|an|new|simple|basic|production)){0,4}\s+(?:python|django|flask|golang|rust|java|javascript|php|ruby|rails|kotlin|swift)\b|(?:build|create|write|implement|develop|напиш|созда|сдела|разработ|реализ).{0,100}(?:\b(?:in|using|with)|на)\s+(?:python|django|flask|golang|go|rust|java|javascript|php|ruby|rails|c\+\+|c#|kotlin|swift|питон|пайтон|джава|джаваскрипт)(?:\b|\s|$)/iu;
+  // Migration only exempts its own clause, never a subsequent authoring request.
+  for (const clause of text.split(/[;.!?\n]+/u)) {
+    if (
+      otherStack.test(clause) &&
+      !/\b(?:migrate|migration|convert|port)\b.{0,100}\b(?:to|into) typescript\b|(?:перенес|перевед|мигрир).{0,100}(?:на|в) typescript/iu.test(
+        clause,
+      )
     )
-  )
-    return 'TS Forge builds applications in TypeScript. I can implement this in TypeScript or help migrate an existing project to TypeScript; configuration, styles and database schemas are supported.';
+      return 'TS Forge builds applications in TypeScript. I can implement this in TypeScript or help migrate an existing project to TypeScript; configuration, styles and database schemas are supported.';
+  }
 }
 
 export class ProductPolicyError extends Error {}
@@ -86,3 +102,23 @@ export function assertSupportedArtifact(filename: string, content: string) {
     }
   }
 }
+
+/** Explicit user read-only scope wins over verbs inside negated instructions. */
+export const requestsReadOnly = (prompt: string) =>
+  /^read[- ]only\b|\bread[- ]only (?:security )?(?:audit|review|analysis|inspection)\b|only use read tools|keep (?:every|all) files? unchanged|do not (?:modify|change|edit) files|без изменени|не (?:изменя|меня|редактиру)й|только чтени/iu.test(
+    prompt,
+  );
+
+export const READ_ONLY_AUDIT_TOOLS = new Set([
+  'read_file',
+  'read_files',
+  'list_files',
+  'search_code',
+  'read_task_memory',
+  'project_mental_model',
+  'inspect_feature',
+  'analyze_impact',
+  'skill_instructions',
+  'search_local_knowledge',
+  'ask_user_question',
+]);
