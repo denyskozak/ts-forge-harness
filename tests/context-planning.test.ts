@@ -186,3 +186,64 @@ test('existing-file improvements use the same bounded tools as fixes', async () 
   assert.equal(isFocusedExistingEdit('Analyze task.ts', ['task.ts'], ['task.ts']), false);
   assert.equal(isFocusedExistingEdit('Improve the application', [], ['task.ts']), false);
 });
+
+test('tool schemas are reduced before a small task loses its latest source evidence', async () => {
+  const { fitToolContext } = await import('../electron/context');
+  const messages = [
+    { role: 'system', content: 'Project instructions. '.repeat(20) },
+    { role: 'user', content: 'Build an emoji gallery with search and click-to-copy.' },
+    {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{ function: { name: 'read_file', arguments: { path: 'App.tsx' } } }],
+    },
+    { role: 'tool', tool_name: 'read_file', content: 'Complete source evidence. '.repeat(40) },
+  ];
+  const tools = [
+    { function: { name: 'oversized_optional_tool', description: 'schema '.repeat(1000) } },
+    { function: { name: 'replace_text', description: 'Make an exact edit' } },
+    { function: { name: 'enable_tool_group', description: 'Load another capability' } },
+    { function: { name: 'read_file', description: 'Read the source' } },
+  ];
+  const fitted = fitToolContext(messages, 4096, tools);
+  assert.ok(!fitted.tools.some((tool) => tool.function.name === 'oversized_optional_tool'));
+  assert.ok(fitted.tools.some((tool) => tool.function.name === 'replace_text'));
+  assert.ok(fitted.tools.some((tool) => tool.function.name === 'enable_tool_group'));
+  assert.equal(fitted.context.messages.at(-1)?.content, messages.at(-1)?.content);
+  assert.ok(fitted.context.inputCharacters <= fitted.context.budgetCharacters);
+  assert.throws(
+    () => fitToolContext([{ role: 'system', content: 'source'.repeat(2000) }], 4096, tools),
+    /Context budget/,
+  );
+});
+
+test('focused file repair retains user constraints and decisions without old tool chatter', async () => {
+  const { focusedEditMessages } = await import('../electron/context');
+  const messages = focusedEditMessages({
+    prompt: 'Build a searchable emoji gallery; no API or new packages.',
+    source: { path: 'App.tsx', content: 'export default function App() { return <Missing />; }' },
+    task: Object.assign(
+      {
+        constraints: ['Keep React'],
+        outOfScope: ['New dependencies'],
+        criteria: [{ id: 'copy', description: 'Click copies the emoji' }],
+      },
+      { validations: ['obsolete diagnostic history'], runId: 'internal-run-id' },
+    ),
+    earlierRequests: ['Keep the interface in Portuguese'],
+    decisions: ['Use the existing design'],
+    project: 'App.tsx imports react',
+  });
+  assert.match(messages[0].content, /untrusted data/);
+  assert.match(messages[0].content, /review and validation/);
+  const data = JSON.parse(
+    messages[1].content.split('Requirements:\n')[1].split('\n\nCurrent source')[0],
+  );
+  assert.ok(messages[1].content.includes('export default function App() { return <Missing />; }'));
+  assert.deepEqual(data.earlierRequests, ['Keep the interface in Portuguese']);
+  assert.deepEqual(data.constraints, ['Keep React']);
+  assert.deepEqual(data.decisions, ['Use the existing design']);
+  assert.match(messages[1].content, /no API or new packages/);
+  assert.equal(data.validations, undefined);
+  assert.equal(data.runId, undefined);
+});

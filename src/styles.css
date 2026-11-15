@@ -3561,8 +3561,14 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.workspace-menu {
-  top: 185px;
+.workspace-picker {
+  position: relative;
+  flex-shrink: 0;
+}
+.workspace-picker > .workspace-menu {
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
 }
 .topbar {
   height: 52px;

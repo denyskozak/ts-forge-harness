@@ -510,56 +510,58 @@ export default function App() {
           <span>New chat</span>
           <kbd>⌘ N</kbd>
         </button>
-        <button
-          className="project-picker"
-          onClick={() =>
-            state.workspaces.length ? setWorkspaceMenu((open) => !open) : void openWorkspace()
-          }
-          disabled={busy}
-        >
-          <div className="project-icon">
-            <FolderOpen size={17} />
-          </div>
-          <div>
-            <strong>{state.workspace?.name || 'Your workspace'}</strong>
-            <span>{state.workspace ? 'Local project' : 'Open a project to begin'}</span>
-          </div>
-          {analyzing ? <LoaderCircle size={14} className="spin" /> : <ChevronDown size={14} />}
-        </button>
-        {workspaceMenu && (
-          <div className="workspace-menu">
-            <div className="workspace-menu-heading">
-              <span>WORKSPACES</span>
-              <button className="icon-button" title="Add workspace" onClick={openWorkspace}>
-                <Plus size={14} />
-              </button>
+        <div className="workspace-picker">
+          <button
+            className="project-picker"
+            onClick={() =>
+              state.workspaces.length ? setWorkspaceMenu((open) => !open) : void openWorkspace()
+            }
+            disabled={busy}
+          >
+            <div className="project-icon">
+              <FolderOpen size={17} />
             </div>
-            {state.workspaces.map((item) => (
-              <div className={`workspace-row ${item.active ? 'active' : ''}`} key={item.path}>
-                <button onClick={() => selectWorkspace(item.path)} title={item.path}>
-                  <FolderOpen size={14} />
-                  <span>
-                    <strong>{item.name}</strong>
-                    <small>
-                      {item.analyzed ? 'TypeScript analysis ready' : 'Analysis pending'}
-                    </small>
-                  </span>
-                </button>
-                <button
-                  className="workspace-remove"
-                  title={`Remove ${item.name}`}
-                  onClick={() => removeWorkspace(item.path)}
-                >
-                  <Trash2 size={12} />
+            <div>
+              <strong>{state.workspace?.name || 'Your workspace'}</strong>
+              <span>{state.workspace ? 'Local project' : 'Open a project to begin'}</span>
+            </div>
+            {analyzing ? <LoaderCircle size={14} className="spin" /> : <ChevronDown size={14} />}
+          </button>
+          {workspaceMenu && (
+            <div className="workspace-menu">
+              <div className="workspace-menu-heading">
+                <span>WORKSPACES</span>
+                <button className="icon-button" title="Add workspace" onClick={openWorkspace}>
+                  <Plus size={14} />
                 </button>
               </div>
-            ))}
-            <button className="workspace-add" onClick={openWorkspace}>
-              <Plus size={14} />
-              Open another project
-            </button>
-          </div>
-        )}
+              {state.workspaces.map((item) => (
+                <div className={`workspace-row ${item.active ? 'active' : ''}`} key={item.path}>
+                  <button onClick={() => selectWorkspace(item.path)} title={item.path}>
+                    <FolderOpen size={14} />
+                    <span>
+                      <strong>{item.name}</strong>
+                      <small>
+                        {item.analyzed ? 'TypeScript analysis ready' : 'Analysis pending'}
+                      </small>
+                    </span>
+                  </button>
+                  <button
+                    className="workspace-remove"
+                    title={`Remove ${item.name}`}
+                    onClick={() => removeWorkspace(item.path)}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+              <button className="workspace-add" onClick={openWorkspace}>
+                <Plus size={14} />
+                Open another project
+              </button>
+            </div>
+          )}
+        </div>
         <div className="project-tree">
           {sessions.map((session) => (
             <button

@@ -45,6 +45,7 @@ npm test                 # Harness regression tests
 npm run build            # Production build
 npm run test:desktop     # Electron UI and IPC smoke tests
 npm run eval:local       # Real Ollama coding evaluations
+npm run eval:simple-apps # Real Ollama + Chromium: emoji search/copy, then Hello World
 ```
 
 **Status: experimental.** Coding quality depends on the local model. A successful connection or TypeScript check does not prove that a feature works. Real-model evaluations still expose logic and recovery failures; signing and notarization remain unfinished.

@@ -17,6 +17,7 @@
     "test:desktop": "npm run build && node scripts/smoke.mjs",
     "format": "prettier --write src electron shared tests scripts vite.config.ts",
     "eval:local": "tsx scripts/evaluate.mts",
+    "eval:simple-apps": "tsx scripts/evaluate-simple-apps.mts",
     "eval:understanding": "tsx scripts/evaluate-understanding.mts",
     "test:ui": "npm run build && node scripts/ui-performance.mjs",
     "test:voice-live": "npm run build && node scripts/voice-live.mjs",

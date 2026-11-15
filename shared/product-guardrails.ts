@@ -62,6 +62,9 @@ export function requestPolicyViolation(prompt: string): string | undefined {
 
 export class ProductPolicyError extends Error {}
 
+/** A model's JavaScript filename mistake can be corrected without allowing the write. */
+export class ArtifactFormatError extends ProductPolicyError {}
+
 export function assertTypeScriptArtifact(filename: string) {
   const name = normalize(filename).replaceAll('\\', '/').split('/').at(-1) ?? '';
   if (
@@ -76,7 +79,7 @@ export function assertTypeScriptArtifact(filename: string) {
     /\.(?:jsx?|mjs|cjs)$/iu.test(name) &&
     !/^(?:[\w-]+\.config\.(?:js|mjs|cjs)|\.(?:eslintrc|prettierrc)\.(?:js|cjs))$/iu.test(name)
   )
-    throw new ProductPolicyError(
+    throw new ArtifactFormatError(
       'Write application code in TypeScript (.ts/.tsx). JavaScript is allowed only for tooling configuration files such as next.config.mjs.',
     );
 }
@@ -105,7 +108,7 @@ export function assertSupportedArtifact(filename: string, content: string) {
 
 /** Explicit user read-only scope wins over verbs inside negated instructions. */
 export const requestsReadOnly = (prompt: string) =>
-  /^read[- ]only\b|\bread[- ]only (?:security )?(?:audit|review|analysis|inspection)\b|only use read tools|keep (?:every|all) files? unchanged|do not (?:modify|change|edit) files|без изменени|не (?:изменя|меня|редактиру)й|только чтени/iu.test(
+  /^read[- ]only\b|\bread[- ]only (?:security )?(?:task|audit|review|analysis|inspection)\b|only use read tools|keep (?:every|all) files? unchanged|do not (?:modify|change|edit) files|без изменени|не (?:изменя|меня|редактиру)й|только чтени/iu.test(
     prompt,
   );
 

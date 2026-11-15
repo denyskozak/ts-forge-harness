@@ -5,6 +5,7 @@ import {
   requestPolicyViolation,
   assertSupportedArtifact,
   ProductPolicyError,
+  ArtifactFormatError,
 } from '../shared/product-guardrails';
 import {
   isAccidentalInput,
@@ -32,6 +33,7 @@ import {
   initialToolGroups,
   enableToolGroup,
   TOOL_GROUP_NAMES,
+  TOOL_GROUPS,
   TOOL_SELECTION_INSTRUCTIONS,
   type ToolGroup,
 } from '../shared/tool-policy';
@@ -124,7 +126,15 @@ import {
   type TaskRecord,
 } from '../shared/task';
 import { runValidation, workspaceFingerprint } from './validation';
-import { compactContext, compactToolResultForModel } from './context';
+import { compilerExcerpt, compilerRepairMessages } from './compiler-repair';
+import { sourceResponse } from './source-response';
+import { missingClipboardInteraction } from './interaction-repair';
+import {
+  compactContext,
+  compactToolResultForModel,
+  fitToolContext,
+  focusedEditMessages,
+} from './context';
 import { queryTypes, analyzeImpact, invalidateAnalysis } from './language-tools';
 import { inspectMentalModel, selectUnderstandingFiles, summarizeMentalModel } from './mental-model';
 import {
@@ -720,6 +730,19 @@ export function isFocusedExistingEdit(prompt: string, paths: string[], existingP
   );
 }
 
+export function simpleReactEditTarget(prompt: string, sourcePaths: string[], frameworks: string[]) {
+  if (
+    explicitSourcePaths(prompt).length ||
+    sourcePaths.length > 4 ||
+    !frameworks.includes('React') ||
+    !/\b(?:simple|single|only|remove)\b|прост|только|единствен|убери/iu.test(prompt) ||
+    !/\b(?:page|button|gallery)\b|страниц|кнопк|галере/iu.test(prompt)
+  )
+    return undefined;
+  const candidates = sourcePaths.filter((filename) => /^(?:src\/)?App\.tsx$/.test(filename));
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
 export class Agent {
   busy = false;
   private controller?: AbortController;
@@ -1041,7 +1064,7 @@ export class Agent {
       const readOnlyProjectUnderstanding = understandingRequest && !requestsProjectChange(prompt);
       let architectureEvidence = '';
       let architecturePaths: string[] = [];
-      if (understandingRequest) {
+      if (understandingRequest || (requestsProjectChange(prompt) && !requestsReadOnly(prompt))) {
         this.status('Reading architecture evidence');
         const selected = selectUnderstandingFiles(map.mentalModel, map.entries, prompt, 8);
         architecturePaths = selected;
@@ -1189,6 +1212,12 @@ export class Agent {
       let validationRepairs = 0;
       let toolArgumentRepairs = 0;
       let understandingRepairs = 0;
+      let focusedWriteRepairs = 0;
+      let focusedWriteFeedback = '';
+      let interactionRepairs = 0;
+      let pendingInteractionRepair:
+        | (NonNullable<ReturnType<typeof missingClipboardInteraction>> & { path: string })
+        | undefined;
       const emptyWorkspaceAtStart = map.files === 0;
       // A new-project request already provides a complete, reviewable contract in the
       // user's prompt. Record it before exposing mutation tools so a small local model
@@ -1384,40 +1413,104 @@ export class Agent {
         if (webTool) groups.add('knowledge');
         if (webTool) enabledNames.add(webTool);
         const previewTools = webTool ? new Set([webTool]) : previewNextTools();
+        let compilerRepair: { path: string; content: string } | undefined;
+        let compilerPatch:
+          | {
+              path: string;
+              oldText: string;
+              startLine: number;
+              diagnostics: string;
+              kind?: 'interaction';
+            }
+          | undefined = pendingInteractionRepair;
+        pendingInteractionRepair = undefined;
+        const simpleTarget =
+          implementationRequested &&
+          checkpoint.planned &&
+          !task.appliedChanges &&
+          !requestedScaffold
+            ? simpleReactEditTarget(
+                prompt,
+                map.entries
+                  .filter((entry) => /\.[cm]?tsx?$/.test(entry.path))
+                  .map((entry) => entry.path),
+                map.mentalModel.frameworks.map((framework) => framework.name),
+              )
+            : undefined;
+        if (!nextPassTools && !previewTools && simpleTarget) {
+          const source = await readRange(root, simpleTarget, 0, 4000).catch(() => undefined);
+          if (source && !source.truncated) {
+            observed.set(simpleTarget, { hash: source.hash, full: true });
+            compilerRepair = { path: simpleTarget, content: source.content };
+          }
+        }
+        if (!nextPassTools && !previewTools && hasCurrentValidationFailure()) {
+          const failures = pendingRequiredChecks()
+            .map(latestValidationFor)
+            .filter(
+              (receipt) => receipt?.status === 'failed' && receipt.fingerprint === task.fingerprint,
+            );
+          const diagnostics = failures.flatMap((receipt) => [
+            ...receipt!.output.matchAll(/^(.+\.tsx?)\((\d+),\d+\): error (TS\d+):/gm),
+          ]);
+          const paths = [...new Set(diagnostics.map((match) => match[1]))];
+          if (paths.length === 1) {
+            const source = await readRange(root, paths[0], 0, 4000).catch(() => undefined);
+            if (source && !source.truncated) {
+              observed.set(path.normalize(paths[0]), { hash: source.hash, full: true });
+              compilerRepair = { path: paths[0], content: source.content };
+              if (diagnostics.every((match) => /^(?:TS1\d+|TS7006)$/.test(match[3]))) {
+                const excerpt = compilerExcerpt(
+                  source.content,
+                  Number(diagnostics[0][2]),
+                  diagnostics[0][3] === 'TS7006',
+                );
+                if (excerpt)
+                  compilerPatch = {
+                    path: paths[0],
+                    ...excerpt,
+                    diagnostics: failures
+                      .map((receipt) => receipt!.output)
+                      .join('\n')
+                      .slice(0, 3000),
+                  };
+              }
+            }
+          }
+        }
         const focusedTools = previewTools
           ? previewTools
-          : checkpoint.planned &&
-              task.appliedChanges === 0 &&
-              implementationRequested &&
-              isFocusedExistingEdit(
-                prompt,
-                mentionedSourcePaths,
-                map.entries.map((entry) => entry.path),
-              )
-            ? new Set([
-                mentionedSourcePaths.every((filename) => observed.get(filename)?.full)
-                  ? 'replace_text'
-                  : 'read_file',
-              ])
-            : needsFocusedImplementation()
-              ? implementationTools
-              : implementationSatisfied() &&
-                  Boolean(requestedScaffold || requestedProductRecipe) &&
-                  !successfulReceipt('install_pnpm_dependencies')
-                ? new Set(['install_pnpm_dependencies'])
-                : implementationSatisfied() && pendingRequiredChecks().length
-                  ? hasCurrentValidationFailure()
-                    ? new Set([
-                        ...implementationTools,
-                        'run_validation',
-                        'typecheck',
-                        'discover_validation_plan',
-                      ])
-                    : new Set(['run_validation', 'typecheck', 'discover_validation_plan'])
-                  : undefined;
+          : compilerPatch
+            ? new Set(['replace_text'])
+            : compilerRepair
+              ? new Set(['write_file'])
+              : checkpoint.planned &&
+                  task.appliedChanges === 0 &&
+                  implementationRequested &&
+                  isFocusedExistingEdit(
+                    prompt,
+                    mentionedSourcePaths,
+                    map.entries.map((entry) => entry.path),
+                  )
+                ? new Set([
+                    mentionedSourcePaths.every((filename) => observed.get(filename)?.full)
+                      ? 'replace_text'
+                      : 'read_file',
+                  ])
+                : needsFocusedImplementation()
+                  ? implementationTools
+                  : implementationSatisfied() &&
+                      Boolean(requestedScaffold || requestedProductRecipe) &&
+                      !successfulReceipt('install_pnpm_dependencies')
+                    ? new Set(['install_pnpm_dependencies'])
+                    : implementationSatisfied() && pendingRequiredChecks().length
+                      ? hasCurrentValidationFailure()
+                        ? new Set([...implementationTools, 'search_code', 'enable_tool_group'])
+                        : new Set(['run_validation', 'typecheck', 'discover_validation_plan'])
+                      : undefined;
         const restriction = nextPassTools ?? focusedTools;
         const requiresTool = nextPassRequiresTool || Boolean(focusedTools);
-        const wholeFileRecoveryPath = nextWholeFileRecoveryPath;
+        const wholeFileRecoveryPath = nextWholeFileRecoveryPath ?? compilerRepair?.path;
         nextWholeFileRecoveryPath = undefined;
         nextPassTools = undefined;
         nextPassRequiresTool = false;
@@ -1430,7 +1523,7 @@ export class Agent {
           : restriction
             ? new Set([...enabledNames].filter((name) => restriction.has(name)))
             : enabledNames;
-        const availableTools = readOnlyProjectUnderstanding
+        let availableTools = readOnlyProjectUnderstanding
           ? []
           : toolDefinitions
               .filter((tool) => availableNames.has(tool.function.name))
@@ -1468,6 +1561,32 @@ export class Agent {
                   },
                 };
               });
+        checkpoint.summary = checkpointSummary(current);
+        messages[0].content = messages[0].content.replace(
+          /<saved_task_evidence>[\s\S]*?<\/saved_task_evidence>/,
+          () => `<saved_task_evidence>\n${checkpoint.summary}\n</saved_task_evidence>`,
+        );
+        // Large optional schemas must not crowd out a small task's source and plan.
+        // Keep newly requested capabilities first when switching tool groups.
+        let nativeContext: ReturnType<typeof compactContext> | undefined;
+        if (!requiresTool) {
+          const preferred =
+            current.messages.at(-1)?.name === 'enable_tool_group'
+              ? [...groups]
+                  .filter((group) => group !== 'core')
+                  .flatMap((group) => [...TOOL_GROUPS[group]])
+              : [];
+          const fitted = fitToolContext(
+            messages,
+            settings.contextTokens,
+            availableTools,
+            preferred,
+          );
+          availableTools = fitted.tools;
+          nativeContext = fitted.context;
+          availableNames.clear();
+          availableTools.forEach((tool) => availableNames.add(tool.function.name));
+        }
         const forcedToolFormat =
           requiresTool && availableTools.length
             ? {
@@ -1482,29 +1601,99 @@ export class Agent {
                 })),
               }
             : undefined;
+        const repairInstruction = hasCurrentValidationFailure()
+          ? `The current source fails validation: ${JSON.stringify(
+              pendingRequiredChecks()
+                .map(latestValidationFor)
+                .filter(
+                  (receipt) =>
+                    receipt?.status === 'failed' && receipt.fingerprint === task.fingerprint,
+                )
+                .slice(-3)
+                .map((receipt) => receipt!.output.slice(0, 3000)),
+            )}. Fix these concrete diagnostics before rerunning the same check. A missing component or function needs a real implementation and the correct import/export, not another reference to the undefined name. Preserve the user's requested behavior; do not remove the feature or replace it with a stub to pass compilation.`
+          : '';
+        let modelMessages = messages;
+        let focusedWritePath: string | undefined;
+        const focusedPatch =
+          !this.actionDeclined &&
+          compilerPatch &&
+          availableTools.length === 1 &&
+          availableTools[0].function.name === 'replace_text'
+            ? compilerPatch
+            : undefined;
+        if (focusedPatch)
+          modelMessages = compilerRepairMessages({
+            ...focusedPatch,
+            goal: prompt,
+            constraints: [
+              ...task.constraints,
+              ...task.outOfScope.map((item) => `Out of scope: ${item}`),
+            ],
+          });
+        if (
+          wholeFileRecoveryPath &&
+          implementationRequested &&
+          !this.actionDeclined &&
+          availableTools.length === 1 &&
+          availableTools[0].function.name === 'write_file'
+        ) {
+          const source = await readRange(root, wholeFileRecoveryPath, 0, 4000);
+          if (!source.truncated) {
+            focusedWritePath = wholeFileRecoveryPath;
+            const files = await scanFiles(root, 10000, signal);
+            observed.set(path.normalize(wholeFileRecoveryPath), { hash: source.hash, full: true });
+            modelMessages = focusedEditMessages({
+              prompt,
+              source: { path: wholeFileRecoveryPath, content: source.content },
+              task,
+              earlierRequests: current.messages
+                .filter((message) => message.role === 'user' && message.content !== prompt)
+                .map((message) => message.content),
+              decisions: current.messages
+                .filter((message) => message.name === 'ask_user_question')
+                .map((message) => message.content),
+              project: JSON.stringify({
+                frameworks: map.mentalModel.frameworks.map((framework) => framework.name),
+                existingFiles: files.files.slice(0, 120),
+                fileListComplete: files.complete && files.files.length <= 120,
+              }),
+            });
+          }
+        }
         exposedToolCount = availableTools.length;
-        checkpoint.summary = checkpointSummary(current);
-        messages[0].content = messages[0].content.replace(
-          /<saved_task_evidence>[\s\S]*?<\/saved_task_evidence>/,
-          () => `<saved_task_evidence>\n${checkpoint.summary}\n</saved_task_evidence>`,
-        );
         await saveCheckpoint();
         this.status(
           `${checkpoint.phase} · pass ${checkpoint.step} · ${availableTools.length} tools`,
         );
-        const context = compactContext(
-          forcedToolFormat
-            ? [
-                ...messages,
-                {
-                  role: 'system' as const,
-                  content: `Call one of these tools using JSON {"name": toolName, "arguments": {...}}. The schema constrains syntax; use the descriptions to choose meaningful arguments. Current user task: ${JSON.stringify(prompt)}. For replace_text, oldText must be copied exactly from the latest file read; newText is the actual implementation, not an explanation or a placeholder. Tools: ${JSON.stringify(availableTools)}`,
-                },
-              ]
-            : messages,
-          settings.contextTokens,
-          forcedToolFormat ? 0 : JSON.stringify(availableTools).length,
-        );
+        const outputTokens = focusedWritePath
+          ? Math.min(4096, Math.floor(settings.contextTokens / 2))
+          : 2048;
+        const context =
+          nativeContext ??
+          compactContext(
+            focusedPatch
+              ? modelMessages
+              : focusedWritePath
+                ? [
+                    modelMessages[0],
+                    {
+                      role: 'user',
+                      content: `${modelMessages[1].content}\n\n${repairInstruction}\n${focusedWriteFeedback}\nReturn the complete corrected source file in a single TypeScript code block. Include all implementations needed by the request. Do not return JSON or a tool envelope.`,
+                    },
+                  ]
+                : forcedToolFormat
+                  ? [
+                      ...modelMessages,
+                      {
+                        role: 'system' as const,
+                        content: `Call one of these tools using JSON {"name": toolName, "arguments": {...}}. The schema constrains syntax; use the descriptions to choose meaningful arguments. Current user task: ${JSON.stringify(prompt)}. ${repairInstruction} For replace_text, oldText must be copied exactly from the latest file read; newText is the actual implementation, not an explanation or a placeholder. Tools: ${JSON.stringify(availableTools)}`,
+                      },
+                    ]
+                  : modelMessages,
+            settings.contextTokens - (outputTokens - 2048),
+            forcedToolFormat ? 0 : JSON.stringify(availableTools).length,
+          );
         checkpoint.context = {
           removedGroups: context.removedGroups,
           estimatedInputTokens: Math.ceil(context.inputCharacters / 3),
@@ -1516,17 +1705,26 @@ export class Agent {
           {
             model: settings.model,
             messages: context.messages,
-            ...(readOnlyProjectUnderstanding
+            ...(readOnlyProjectUnderstanding || focusedWritePath
               ? {}
               : forcedToolFormat
-                ? { format: forcedToolFormat }
+                ? {
+                    format: focusedPatch
+                      ? {
+                          type: 'object',
+                          properties: { replacement: { type: 'string' } },
+                          required: ['replacement'],
+                          additionalProperties: false,
+                        }
+                      : forcedToolFormat,
+                  }
                 : { tools: availableTools }),
             options: {
               temperature: settings.temperature,
               num_ctx: settings.contextTokens,
-              num_predict: 2048,
-              repeat_penalty: 1.15,
-              repeat_last_n: 256,
+              num_predict: outputTokens,
+              repeat_penalty: implementationRequested ? 1.1 : 1.15,
+              repeat_last_n: implementationRequested ? 64 : 256,
             },
           },
           AbortSignal.any([signal, AbortSignal.timeout(600000)]),
@@ -1536,6 +1734,43 @@ export class Agent {
             this.emit({ type: 'token', text });
           },
         );
+        if (focusedPatch && !answer.tool_calls?.length) {
+          try {
+            const replacement = schemas.replace_text.parse({
+              path: focusedPatch.path,
+              oldText: focusedPatch.oldText,
+              newText: JSON.parse(answer.content).replacement,
+            });
+            answer.content = '';
+            answer.tool_calls = [{ function: { name: 'replace_text', arguments: replacement } }];
+          } catch {
+            // Invalid output follows the normal bounded argument-repair path.
+          }
+        }
+        if (focusedWritePath && !answer.tool_calls?.length) {
+          try {
+            const file = schemas.write_file.parse({
+              path: focusedWritePath,
+              content: sourceResponse(answer.content, answer.finishReason),
+            });
+            answer.content = '';
+            answer.tool_calls = [{ function: { name: 'write_file', arguments: file } }];
+            focusedWriteRepairs = 0;
+            focusedWriteFeedback = '';
+          } catch {
+            if (focusedWriteRepairs++ < 2) {
+              focusedWriteFeedback =
+                'The previous response was incomplete or invalid source and was not applied. Generate a shorter complete implementation in a single TypeScript code block. Avoid repetitive data and decorative markup; close the code block within the response budget.';
+              nextPassTools = new Set(['write_file']);
+              nextWholeFileRecoveryPath = focusedWritePath;
+              nextPassRequiresTool = true;
+              delete this.store.value.activeRun!.stream;
+              this.status('Regenerating incomplete source response; no file was changed');
+              continue;
+            }
+            // Repeated invalid output follows the ordinary bounded recovery below.
+          }
+        }
         const recovered = !answer.tool_calls?.length
           ? recoverReadOnlyToolCall(answer.content)
           : undefined;
@@ -2131,7 +2366,9 @@ export class Agent {
           !this.actionDeclined &&
           validationRepairs++ < 6
         ) {
-          nextPassTools = new Set(['run_validation', 'typecheck', 'discover_validation_plan']);
+          nextPassTools = hasCurrentValidationFailure()
+            ? implementationTools
+            : new Set(['run_validation', 'typecheck', 'discover_validation_plan']);
           nextPassRequiresTool = true;
           messages.push(answer, {
             role: 'system',
@@ -3149,8 +3386,22 @@ export class Agent {
               throw new Error('Unknown tool.');
             }
           } catch (error) {
-            if (error instanceof ProductPolicyError) throw error;
+            if (error instanceof ProductPolicyError && !(error instanceof ArtifactFormatError))
+              throw error;
             result = `Tool error: ${(error as Error).message}`;
+            if (error instanceof z.ZodError) {
+              // Repair malformed native calls with the same schema on the next pass.
+              // Otherwise the model sees every tool again and can repeat the omission.
+              nextPassTools = new Set([name]);
+              nextPassRequiresTool = true;
+            }
+            if (error instanceof ArtifactFormatError)
+              result += ` No file was changed. Read the actual TypeScript entrypoint and apply the requested behavior there. Known source paths: ${JSON.stringify(
+                map.entries
+                  .filter((entry) => /\.tsx?$/.test(entry.path))
+                  .map((entry) => entry.path)
+                  .slice(0, 30),
+              )}. Do not invent filenames or rename a JavaScript file without inspecting its consumers.`;
             if (/relative workspace path|outside the allowed workspace/.test(result))
               result += ` Use an exact relative path from read_file/list_files. Previously read paths: ${JSON.stringify([...observed.keys()].slice(0, 30))}. No file was changed. Do not repeat the rejected path.`;
           }
@@ -3161,6 +3412,16 @@ export class Agent {
           });
           await add('tool', result, name);
           await saveCheckpoint();
+          if (name === 'write_file' && result.startsWith('Tool error: No-op edit')) {
+            nextPassTools = new Set(['replace_text']);
+            nextPassRequiresTool = true;
+            nextWholeFileRecoveryPath = undefined;
+            messages.push({
+              role: 'system',
+              content:
+                'The whole-file response copied the existing source without fixing it. Change approach: use replace_text to correct a unique, small fragment identified by the current compiler diagnostics or requested behavior. Copy oldText exactly from the source; newText must actually differ.',
+            });
+          }
           if (
             /^Tool error:.*(?:relative workspace path|outside the allowed workspace)/s.test(
               result,
@@ -3247,6 +3508,36 @@ export class Agent {
         const requiredChecksPassed =
           implementationSatisfied() && completionEvidence(task).checksSatisfied;
         if (requiredChecksPassed && !previewNextTools()) {
+          const pageTarget = simpleReactEditTarget(
+            prompt,
+            map.entries
+              .filter((entry) => /\.[cm]?tsx?$/.test(entry.path))
+              .map((entry) => entry.path),
+            map.mentalModel.frameworks.map((framework) => framework.name),
+          );
+          const source = pageTarget
+            ? await readRange(root, pageTarget, 0, 4000).catch(() => undefined)
+            : undefined;
+          const missing =
+            source && !source.truncated
+              ? missingClipboardInteraction(source.content, prompt)
+              : undefined;
+          if (missing && pageTarget && source) {
+            if (this.actionDeclined || interactionRepairs++ >= 3) {
+              task.outcome = 'failed';
+              await add(
+                'assistant',
+                'Compiler checks passed, but the requested clipboard interaction is still missing.',
+              );
+              break;
+            }
+            observed.set(path.normalize(pageTarget), { hash: source.hash, full: true });
+            pendingInteractionRepair = { path: pageTarget, ...missing };
+            nextPassTools = undefined;
+            nextPassRequiresTool = false;
+            this.status('Repairing missing clipboard interaction before completion');
+            continue;
+          }
           await add(
             'assistant',
             `Implementation applied to the workspace. Required checks passed: ${task.requiredChecks

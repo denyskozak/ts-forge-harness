@@ -94,9 +94,24 @@ export interface LLMMessage {
   tool_calls?: ToolCall[];
   tool_name?: string;
   thinking?: string;
+  finishReason?: string;
 }
 export interface ToolCall {
   function: { name: string; arguments: Record<string, unknown> };
+}
+/** Older Ollama templates only render a leading system block, not system turns. */
+export function providerMessages(messages: LLMMessage[]): LLMMessage[] {
+  const turns = messages.map((message) => {
+    const turn = { ...message };
+    delete turn.finishReason;
+    return turn;
+  });
+  const instructions = turns.filter((message) => message.role === 'system');
+  if (!instructions.length) return turns;
+  return [
+    { role: 'system', content: instructions.map((message) => message.content).join('\n\n') },
+    ...turns.filter((message) => message.role !== 'system'),
+  ];
 }
 /** Uses Ollama only through the already validated loopback endpoint. */
 export async function embed(
@@ -130,14 +145,18 @@ export async function embed(
 }
 export async function chat(
   endpoint: string,
-  body: object,
+  body: Record<string, unknown> & { messages?: LLMMessage[] },
   signal: AbortSignal,
   onToken: (text: string) => void,
 ): Promise<LLMMessage> {
   const response = await localFetch(endpoint, '/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, stream: true }),
+    body: JSON.stringify({
+      ...body,
+      ...(body.messages ? { messages: providerMessages(body.messages) } : {}),
+      stream: true,
+    }),
     signal,
   });
   if (!response.ok)
@@ -152,10 +171,12 @@ export async function chat(
   let thinking = '';
   const calls: ToolCall[] = [];
   let done = false;
+  let finishReason: string | undefined;
   let totalBytes = 0;
   const chunkSchema = z.object({
     error: z.string().optional(),
     done: z.boolean().optional(),
+    done_reason: z.string().optional(),
     message: z
       .object({
         content: z.string().optional(),
@@ -186,7 +207,10 @@ export async function chat(
       calls.push(...chunk.message.tool_calls);
       if (calls.length > 32) throw new Error('Model returned too many tool calls (maximum 32).');
     }
-    if (chunk.done) done = true;
+    if (chunk.done) {
+      done = true;
+      finishReason = chunk.done_reason;
+    }
   }
   try {
     while (true) {
@@ -209,6 +233,7 @@ export async function chat(
     return {
       role: 'assistant',
       content,
+      ...(finishReason ? { finishReason } : {}),
       ...(calls.length ? { tool_calls: calls } : {}),
       ...(thinking ? { thinking } : {}),
     };

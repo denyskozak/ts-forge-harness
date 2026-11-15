@@ -49,7 +49,7 @@ const server = createServer(async (req, res) => {
   if (req.url === '/api/tags')
     return res.end('{"models":[{"name":"fixture:local","size":1024,"capabilities":["tools"]}]}');
   if (req.url === '/api/show') return res.end('{"capabilities":["tools"]}');
-  if (!body.tools) {
+  if (!body.tools && !body.format?.oneOf) {
     const nextStep = body.messages?.some((message) =>
       message.content?.includes('Suggest exactly one useful next instruction'),
     );
@@ -132,7 +132,7 @@ const server = createServer(async (req, res) => {
     );
   }
   let message;
-  if (step++ === 0)
+  if (step++ === 1)
     message = {
       content: 'I need one decision before changing the public value.',
       tool_calls: [
@@ -145,13 +145,17 @@ const server = createServer(async (req, res) => {
               options: [
                 { label: 'Current API', description: 'Update consumers to the new greeting.' },
                 { label: 'Legacy API', description: 'Keep compatibility with the old greeting.' },
+                {
+                  label: 'Versioned API',
+                  description: 'Expose both greetings under separate exports.',
+                },
               ],
             },
           },
         },
       ],
     };
-  else if (step === 2) {
+  else if (step === 1) {
     message = {
       content: 'Planning the change.',
       tool_calls: [
@@ -192,20 +196,15 @@ const server = createServer(async (req, res) => {
     };
   } else if (step === 5)
     message = {
-      content: 'Checking symbols.',
+      content: 'Checking the project.',
       tool_calls: [
         {
           function: {
-            name: 'typescript_query',
-            arguments: { kind: 'diagnostics', path: 'index.ts' },
+            name: 'run_validation',
+            arguments: { recipe: 'typescript.check', project: 'tsconfig.json' },
           },
         },
       ],
-    };
-  else if (step === 6)
-    message = {
-      content: 'Checking the project.',
-      tool_calls: [{ function: { name: 'typecheck', arguments: { project: 'tsconfig.json' } } }],
     };
   else message = { content: 'The greeting was updated and checked.' };
   res.end(JSON.stringify({ message, done: true }) + '\n');
@@ -224,6 +223,11 @@ app.process().stderr.on('data', (chunk) => process.stderr.write(chunk));
 try {
   const page = await app.firstWindow({ timeout: 20000 });
   const errors = [];
+  const showChanges = async () => {
+    const toggle = page.getByRole('button', { name: 'Show context panel', exact: true });
+    if (await toggle.isVisible()) await toggle.click();
+    await page.getByRole('button', { name: /^Changes/ }).click();
+  };
   page.on('pageerror', (e) => errors.push(e.message));
   await page.getByText('What would you like to build?').waitFor();
   await expect(page.locator('.context-panel')).toHaveCount(0);
@@ -293,7 +297,7 @@ try {
   await app.evaluate(({ dialog }, project) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [project] });
   }, project);
-  await page.getByRole('button', { name: 'Your workspace Open a project to begin' }).click();
+  await page.getByRole('button', { name: /^Your workspace/ }).click();
   await page.getByText('What would you like to build?').waitFor();
   await page.getByRole('button', { name: 'Show context panel', exact: true }).click();
   await page.getByRole('button', { name: 'View project map' }).waitFor();
@@ -394,22 +398,22 @@ try {
   await app.evaluate(({ dialog }, selected) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
   }, secondProject);
-  await page.getByRole('button', { name: 'fixture Local project' }).click();
+  await page.locator('button.project-picker').click();
   await page.getByRole('button', { name: 'Open another project' }).click();
   await expect
     .poll(() => page.evaluate(() => window.forge.state().then((s) => s.workspace.name)))
     .toBe('second-fixture');
   assert.equal((await page.evaluate(() => window.forge.state())).workspaces.length, 2);
-  await page.getByRole('button', { name: 'second-fixture Local project' }).click();
+  await page.locator('button.project-picker').click();
   await page
     .getByRole('button', { name: 'fixture TypeScript analysis ready', exact: true })
     .click();
   await expect
     .poll(() => page.evaluate(() => window.forge.state().then((s) => s.workspace.name)))
     .toBe('fixture');
-  await page.getByRole('button', { name: 'fixture Local project' }).click();
+  await page.locator('button.project-picker').click();
   await page.screenshot({ path: 'docs/forge-workspaces.png' });
-  await page.getByRole('button', { name: 'fixture Local project' }).click();
+  await page.locator('button.project-picker').click();
   await page.getByRole('textbox', { name: 'Message Forge' }).fill('Change world to forge.');
   await page.getByRole('button', { name: 'Run task' }).click();
   await page
@@ -422,12 +426,14 @@ try {
   await page.reload();
   await page.getByRole('group', { name: 'Forge question' }).waitFor();
   await page.screenshot({ path: 'docs/forge-clarification.png' });
+  await page.getByRole('button', { name: /Write my own answer/ }).click();
   await expect(page.getByRole('button', { name: 'Send answer', exact: true })).toBeDisabled();
   await page
-    .getByLabel('Or write your own answer')
+    .getByLabel('Your answer', { exact: true })
     .fill('Current API, keep existing callers compatible.');
   await page.getByRole('button', { name: 'Send answer', exact: true }).click();
   await page.getByRole('button', { name: 'Apply change' }).waitFor();
+  await showChanges();
   await page.locator('.diff .added').filter({ hasText: 'forge' }).first().waitFor();
   await page.reload();
   await page.getByRole('button', { name: 'Apply change' }).waitFor();
@@ -439,17 +445,10 @@ try {
     checked.sessions[0].messages.find((m) => m.name === 'ask_user_question').content,
     /keep existing callers compatible/,
   );
-  assert.match(
-    checked.sessions[0].messages.find((m) => m.name === 'typecheck').content,
-    /Exit code: 0/,
-  );
-  assert.deepEqual(
-    JSON.parse(checked.sessions[0].messages.find((m) => m.name === 'typescript_query').content)
-      .diagnostics,
-    [],
-  );
+  assert.equal(checked.sessions[0].task.validations.at(-1).status, 'passed');
+  assert.match(checked.sessions[0].task.validations.at(-1).output, /Exit code: 0/);
   assert.match(await readFile(path.join(project, 'index.ts'), 'utf8'), /"forge"/);
-  await page.getByRole('button', { name: /^Changes/ }).click();
+  await showChanges();
   await page.getByRole('button', { name: 'Undo change', exact: true }).click();
   await expect
     .poll(() =>
@@ -467,20 +466,20 @@ try {
     .fill('Extract greeting into a new feature module and preserve hello.');
   await page.getByRole('button', { name: 'Run task' }).click();
   await page.getByRole('button', { name: 'Apply changeset', exact: true }).waitFor();
+  await showChanges();
   await page.getByRole('region', { name: 'Impact preview' }).last().waitFor();
   assert.equal(await readFile(path.join(project, 'index.ts'), 'utf8'), original);
   await page.reload();
   await page.getByRole('button', { name: 'Apply changeset', exact: true }).waitFor();
   await page.screenshot({ path: 'docs/forge-task-review.png' });
   await page.getByRole('button', { name: 'Apply changeset', exact: true }).click();
-  await page.getByRole('button', { name: 'Resume task', exact: true }).waitFor();
-  await expect(page.getByRole('region', { name: 'Task progress' })).toContainText('Pass 3');
+  // The agent now continues through validation without pausing at maxSteps.
+  await page.getByRole('button', { name: 'Run check', exact: true }).waitFor();
   await page.reload();
-  await page.getByRole('button', { name: 'Resume task', exact: true }).click();
   await page.getByRole('button', { name: 'Run check', exact: true }).click();
   await page.getByRole('button', { name: 'Stop agent' }).waitFor({ state: 'hidden' });
   const featureState = await page.evaluate(() => window.forge.state());
-  assert.equal(featureState.sessions[0].checkpoint.step, 4);
+  assert.ok(featureState.sessions[0].checkpoint.step >= 4);
   await page.evaluate(async () => {
     const state = await window.forge.state();
     await window.forge.settings({ ...state.settings, maxSteps: 12 });
@@ -488,6 +487,7 @@ try {
   assert.equal(featureState.sessions[0].task.outcome, 'completed_unverified');
   assert.equal(featureState.sessions[0].task.validations.at(-1).status, 'passed');
   assert.match(await readFile(path.join(project, 'index.ts'), 'utf8'), /import/);
+  await page.locator('.task-details > summary').click();
   await page.locator('.task-panel > summary').click();
   const checkboxes = page.locator('.task-criterion input');
   for (let index = 0; index < (await checkboxes.count()); index++) {
@@ -498,7 +498,7 @@ try {
     .poll(() => page.evaluate(() => window.forge.state().then((s) => s.sessions[0].task.outcome)))
     .toBe('completed_verified');
   await page.screenshot({ path: 'docs/forge-task-verified.png' });
-  await page.getByRole('button', { name: /^Changes/ }).click();
+  await showChanges();
   await page.getByRole('button', { name: 'Undo changeset', exact: true }).click();
   await expect.poll(() => readFile(path.join(project, 'index.ts'), 'utf8')).toBe(original);
   await assert.rejects(readFile(path.join(project, 'feature.ts'), 'utf8'));
@@ -550,7 +550,7 @@ try {
   }
   await page.getByRole('button', { name: 'Toggle Next.js' }).click();
   assert.ok((await page.evaluate(() => window.forge.state())).settings.skills.includes('next'));
-  await page.getByRole('button', { name: 'Training lab LAB' }).click();
+  await page.getByRole('button', { name: 'Training lab', exact: true }).click();
   await page.getByRole('heading', { name: 'Teach it your way.' }).waitFor();
   await page.screenshot({ path: 'docs/forge-training.png' });
   await page.getByRole('button', { name: 'Add example', exact: true }).click();

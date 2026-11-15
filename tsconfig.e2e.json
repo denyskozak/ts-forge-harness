@@ -4,6 +4,7 @@
     "scripts/live-e2e.mts",
     "scripts/live-support.ts",
     "scripts/evaluate.mts",
+    "scripts/evaluate-simple-apps.mts",
     "scripts/acceptance.ts",
     "src/api.ts",
     "scripts/evaluate-continuity.mts",

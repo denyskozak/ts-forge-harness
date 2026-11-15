@@ -1,5 +1,64 @@
 # Evals, completion evidence and code quality
 
+## Simple React app acceptance
+
+`npm run eval:simple-apps` sends the original emoji-gallery prompt to a local model,
+then asks it to replace the gallery with a single Hello World button in the same
+project and conversation. The default is `llama3.1:8b`; override it with
+`FORGE_EVAL_MODEL`. Ollama and the installed Playwright Chromium are required.
+
+The runner creates an isolated React/TypeScript fixture from installed dependencies.
+It approves only fixture edits and compiler checks, supplies no implementation or
+clarification answers, and saves transcripts, generated sources, screenshots and
+`results.json` under `.forge-test-results/simple-apps-*`. Browser assertions live
+outside the agent's editable project. They check case-insensitive search, empty
+results, clearing the query, copying three different emoji to the real clipboard,
+no API calls or added packages, and the single-button replacement. A compiler pass
+alone cannot pass this evaluation. The runner does not grant human acceptance in
+the application's completion policy.
+
+The harness now folds system instructions into one leading Ollama message: the
+installed Llama template skips interleaved system turns, including a trailing
+turn that otherwise prevents its assistant prefix. Small existing React page
+edits receive bounded source context. Whole-file generation uses a single fenced
+TypeScript artifact instead of forcing source through a JSON grammar. Incomplete,
+multiple or output-limited artifacts are rejected before review. Unchanged
+whole-file writes switch to an exact-fragment edit. Syntax
+errors and implicit parameter types can use compiler-located excerpts; type
+repairs retain complete statement boundaries from the TypeScript syntax tree.
+The model supplies replacement code, while the harness fixes the path and original
+excerpt and retains the existing review, stale-source and validation gates.
+
+Observed on 2026-11-13: `llama3.1:8b`, 16K context, temperature 0 passed both
+browser cases in one uninterrupted run, with the button request following the
+gallery in the same conversation. The gallery required autonomous syntax and
+parameter-type repairs; no human answers or manual source edits were supplied.
+The earlier `qwen2.5:1.5b` trial failed and is not counted as a success. These are
+narrow fixture results, not a reliability claim for every model or project.
+Validation: 209 tests passed, production build and eval-script typecheck passed,
+and the Electron desktop smoke test passed.
+
+### Qwen follow-up
+
+`FORGE_EVAL_MODEL=qwen2.5:1.5b npm run eval:simple-apps` now passes both browser
+cases in the same conversation at 16K context and temperature 0, without manual
+source edits or clarification answers. Qwen initially substituted `alert` for
+copying. A bounded omission check now detects an absent clipboard operation in a
+self-contained small React page, asks the model to repair the relevant item
+button, and reruns compiler checks. This check does not certify runtime behavior
+and does not inspect imported helper implementations; independent browser checks
+remain required. The browser test also rejects unassigned pictographic code points.
+
+Platform guidance supplies standard browser API usage and a few correct Unicode
+reference characters, not an app implementation. For an explicit whole-page
+replacement, a props-free module with only a default export, React imports and
+constant data can be summarized to its export contract after reading the full
+file. Props, other exports, other imports and module-level execution retain the
+full source. This avoids replaying superseded UI while preserving review and
+stale-source protection. Regression validation: 216 tests passed, production
+build, eval-script typecheck and Electron desktop smoke test passed. The same
+final browser evaluation also passed both cases on `llama3.1:8b` after these changes.
+
 ## Implemented in this iteration
 
 - `scripts/acceptance.ts` compiles candidate TypeScript with strict checks and runs test-owned behavior assertions outside the editable workspace. Successful chat text, candidate-authored tests and tool-call formatting cannot substitute for these assertions. Execution uses the existing macOS sandbox with no network or writable project access during verification.

@@ -414,7 +414,9 @@ for (const recovery of ['path', 'fragment'] as const)
       if (index === 0) initialSchema = JSON.parse(body).format;
       if (index === 3) {
         recoverySchema = JSON.parse(body).format;
-        recoveryInstructions = JSON.parse(body).messages.at(-1).content;
+        recoveryInstructions = JSON.parse(body)
+          .messages.map((m: { content: string }) => m.content)
+          .join('\n');
       }
       const call = calls[index++];
       res.end(
@@ -457,13 +459,15 @@ for (const recovery of ['path', 'fragment'] as const)
     assert.match(await fs.readFile(path.join(root, 'index.ts'), 'utf8'), /after/);
     assert.match(JSON.stringify(initialSchema), /plan_task/);
     assert.doesNotMatch(JSON.stringify(initialSchema), /apply_changeset/);
-    assert.match(
-      JSON.stringify(recoverySchema),
-      recovery === 'path' ? /replace_text/ : /write_file/,
-    );
-    assert.match(recoveryInstructions, /oldText must be copied exactly/);
+    if (recovery === 'path') {
+      assert.match(JSON.stringify(recoverySchema), /replace_text/);
+      assert.match(recoveryInstructions, /oldText must be copied exactly/);
+      assert.match(JSON.stringify(recoverySchema), /"enum":\["index.ts"(?:,"tsconfig.json")?\]/);
+    } else {
+      assert.equal(recoverySchema, undefined);
+      assert.match(recoveryInstructions, /complete corrected source file/);
+    }
     assert.match(recoveryInstructions, /Change the greeting to after in index.ts/);
-    assert.match(JSON.stringify(recoverySchema), /"enum":\["index.ts"\]/);
     assert.equal(
       store.value.sessions[0].task?.criteria[0].description,
       'Change the greeting to after in index.ts.',

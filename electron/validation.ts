@@ -210,8 +210,11 @@ export async function runValidation(
     const base = path.join(dataPath, 'validation');
     await fs.mkdir(base, { recursive: true, mode: 0o700 });
     scratch = await fs.mkdtemp(path.join(base, 'run-'));
-    const snapshot = path.join(scratch, 'project');
-    await fs.mkdir(snapshot);
+    const snapshotPath = path.join(scratch, 'project');
+    await fs.mkdir(snapshotPath);
+    // Match the compiler's canonical cwd (not macOS's /var -> /private/var alias),
+    // so diagnostics name workspace files instead of long traversal paths.
+    const snapshot = await fs.realpath(snapshotPath);
     for (const file of captured.files) {
       const dest = path.join(snapshot, file.path);
       await fs.mkdir(path.dirname(dest), { recursive: true });

@@ -236,6 +236,7 @@ test('read-only security audits reject unsolicited model edits before approval',
 
 test('read-only intent refers to task scope, not the product being implemented', () => {
   assert.equal(requestsReadOnly('Build a read-only TypeScript API'), false);
+  assert.equal(requestsReadOnly('Inspect index.ts and describe it. Read-only task.'), true);
   assert.equal(requestsReadOnly('Perform a read-only security audit. Do not modify files.'), true);
   assert.equal(requestsReadOnly('Сделай аудит без изменений'), true);
 });
