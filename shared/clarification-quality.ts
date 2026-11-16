@@ -20,12 +20,13 @@ export function hasMeaningfulClarification(
   question: string,
   options: { label: string }[],
   prompt: string,
+  allowTwoChoices = false,
 ) {
   const labels = options.map((option) => normalized(option.label));
   return (
     normalized(question) !== normalized(prompt) &&
     !isAccidentalInput(question) &&
-    options.length === 3 &&
+    (options.length === 3 || (allowTwoChoices && options.length === 2)) &&
     labels.every((label) => label.length > 0 && !placeholder.test(label)) &&
     new Set(labels).size === labels.length
   );

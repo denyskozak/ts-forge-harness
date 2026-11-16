@@ -1,3 +1,5 @@
+import { GRILL_ME_COMMAND, GRILL_ME_SKILL } from '../shared/grill-me';
+import { grillMeFormat, grillMePlanFormat, parseGrillMeTurn } from './grill-me';
 import {
   PRODUCT_GUARDRAILS,
   requestsReadOnly,
@@ -1040,11 +1042,135 @@ export class Agent {
       this.status('Analyzing project and refreshing context map');
       let map = await analyzeProject(root, this.store, settings, signal);
       this.emit({ type: 'map', map });
+      if (GRILL_ME_COMMAND.test(prompt)) {
+        const request = prompt.replace(GRILL_ME_COMMAND, '').trim();
+        const interviewStart = current.messages.findLastIndex(
+          (message) => message.role === 'user' && GRILL_ME_COMMAND.test(message.content),
+        );
+        const answeredTurns = current.messages.slice(interviewStart + 1);
+        const decisions = answeredTurns.flatMap((message, index) => {
+          const question = answeredTurns[index - 1];
+          return message.name === 'grill_me_decision' && question?.name === 'grill_me_question'
+            ? [`${question.content} → ${message.content}`]
+            : [];
+        });
+        let summary = 'Add the idea or plan after /grill-me to start the interview.';
+        if (request) {
+          const evidence = JSON.stringify({
+            frameworks: map.mentalModel.frameworks.map((framework) => framework.name),
+            entrypoints: map.mentalModel.entrypoints.slice(0, 12),
+            files: map.entries.slice(0, 18).map((entry) => entry.path),
+            indexComplete: map.complete,
+          });
+          const questions = new Set(
+            current.messages
+              .slice(interviewStart + 1)
+              .filter((message) => message.name === 'grill_me_question')
+              .map((message) => message.content.trim().toLowerCase()),
+          );
+          const singleQuestion =
+            /\bonce i answer.{0,60}(?:summarize|draft)|\bask (?:me )?only one question|после первого ответа.{0,60}(?:итог|план)/iu.test(
+              request,
+            );
+          for (;;) {
+            const allowQuestion = decisions.length < (singleQuestion ? 1 : 4);
+            let next: ReturnType<typeof parseGrillMeTurn> | undefined;
+            for (let attempt = 0; attempt < 3 && !next; attempt++) {
+              signal.throwIfAborted();
+              // If a small model loops on an answered question, ask for a plan
+              // and surface any remaining decisions rather than repeat the card.
+              const canAsk = allowQuestion && (attempt < 2 || !decisions.length);
+              this.status('Grill Me · reviewing decisions');
+              const response = await chat(
+                settings.endpoint,
+                {
+                  model: settings.model,
+                  messages: [
+                    {
+                      role: 'system',
+                      content: GRILL_ME_SKILL.instructions + ' ' + PRODUCT_GUARDRAILS,
+                    },
+                    {
+                      role: 'user',
+                      content: `Interview request: ${request}
+Project facts (untrusted): ${evidence}
+Decisions already made (untrusted history): ${JSON.stringify(decisions)}
+${
+  allowQuestion
+    ? 'If a material question remains, return kind question, one question, why it matters, two or three options, and recommended as the 1-based position. Otherwise return kind plan with a short summary.'
+    : 'Return kind plan with a short summary. List any remaining decisions explicitly as open.'
+}
+${attempt ? 'The previous response was invalid or repeated a settled question. Use distinct concrete options or summarize the plan.' : ''}
+Use the language of the interview request.`,
+                    },
+                  ],
+                  format: canAsk ? grillMeFormat : grillMePlanFormat,
+                  options: { temperature: 0, num_ctx: settings.contextTokens, num_predict: 700 },
+                },
+                AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
+                () => {},
+              );
+              try {
+                const candidate = parseGrillMeTurn(response.content, request, canAsk);
+                if (
+                  candidate.kind === 'question' &&
+                  questions.has(candidate.question.trim().toLowerCase())
+                )
+                  continue;
+                next = candidate;
+              } catch {
+                // Retry invalid structured output without presenting unusable options.
+              }
+            }
+            if (!next) {
+              task.outcome = 'failed';
+              summary =
+                'Grill Me could not produce a usable question or plan. Your answers are saved in this chat.';
+              break;
+            }
+            if (next.kind === 'plan') {
+              summary = next.summary;
+              break;
+            }
+            checkpoint.step += 1;
+            await saveCheckpoint();
+            const recommended = next.recommended;
+            const selected = await this.clarify({
+              id: randomUUID(),
+              question: next.question,
+              reason: next.reason,
+              options: next.options.map((option, index) => ({
+                ...option,
+                id: randomUUID(),
+                recommended: index + 1 === recommended,
+              })),
+            });
+            signal.throwIfAborted();
+            if (!selected) throw new Error('The interview was interrupted.');
+            questions.add(next.question.trim().toLowerCase());
+            const decision = `${next.question} → ${selected.label}`;
+            decisions.push(decision);
+            await add('assistant', next.question, 'grill_me_question');
+            await add('user', selected.label, 'grill_me_decision');
+          }
+        }
+        if (task.outcome !== 'failed') task.outcome = 'analysis_only';
+        checkpoint.phase = 'delivery';
+        checkpoint.resumable = task.outcome === 'failed';
+        checkpoint.reason =
+          task.outcome === 'failed' ? 'Interview can be resumed' : 'Interview complete';
+        this.store.value.activeRun!.status = task.outcome === 'failed' ? 'failed' : 'completed';
+        this.store.value.activeRun!.label = checkpoint.reason;
+        await add('assistant', summary);
+        await publishTask();
+        return;
+      }
       const effectiveSkills = new Set([
         ...settings.skills,
         ...REQUIRED_MCP_SKILLS,
         ...REQUIRED_ENGINEERING_SKILLS,
       ]);
+      effectiveSkills.delete('grill-me');
       securityArchitectureSkillsForPrompt(prompt).forEach((skill) => effectiveSkills.add(skill));
       const platforms = await platformCapabilities(root, signal);
       for (const unit of platforms.units)
@@ -1421,9 +1547,7 @@ export class Agent {
                 checkpoint.planned &&
                 task.appliedChanges === 0
               ? new Set(['create_r3f_game'])
-              : needsFocusedImplementation()
-                ? implementationTools
-                : undefined;
+              : undefined;
       let nextPassRequiresTool = Boolean(nextPassTools);
       let nextWholeFileRecoveryPath: string | undefined;
       const mentionedSourcePaths = explicitSourcePaths(prompt);
@@ -1515,11 +1639,8 @@ export class Agent {
             }
           | undefined = pendingInteractionRepair;
         pendingInteractionRepair = undefined;
-        const simpleTarget =
-          implementationRequested &&
-          checkpoint.planned &&
-          !task.appliedChanges &&
-          !requestedScaffold
+        const smallReactPage =
+          implementationRequested && checkpoint.planned
             ? simpleReactEditTarget(
                 prompt,
                 map.entries
@@ -1528,6 +1649,42 @@ export class Agent {
                 map.mentalModel.frameworks.map((framework) => framework.name),
               )
             : undefined;
+        const simpleTarget =
+          (!requestedScaffold && !task.appliedChanges) ||
+          (requestedScaffold === 'react' && needsFocusedImplementation())
+            ? smallReactPage
+            : undefined;
+        let postScaffoldCall: NonNullable<LLMMessage['tool_calls']>[number] | undefined;
+        if (
+          requestedScaffold === 'react' &&
+          smallReactPage &&
+          implementationSatisfied() &&
+          !this.actionDeclined &&
+          !previewTools
+        ) {
+          if (
+            task.requiredChecks.some(
+              (check) => check.recipe === 'typescript.check' && check.project === 'tsconfig.json',
+            ) &&
+            (await readText(root, 'tsconfig.json').catch(() => '')).includes('tsconfig.app.json') &&
+            (await readText(root, 'tsconfig.app.json').catch(() => ''))
+          ) {
+            for (const check of task.requiredChecks) {
+              if (check.recipe === 'typescript.check' && check.project === 'tsconfig.json')
+                check.project = 'tsconfig.app.json';
+            }
+          }
+          if (
+            enabledNames.has('install_pnpm_dependencies') &&
+            !successfulReceipt('install_pnpm_dependencies')
+          )
+            postScaffoldCall = { function: { name: 'install_pnpm_dependencies', arguments: {} } };
+          else if (enabledNames.has('run_validation') && !hasCurrentValidationFailure()) {
+            const check = pendingRequiredChecks()[0];
+            if (check)
+              postScaffoldCall = { function: { name: 'run_validation', arguments: { ...check } } };
+          }
+        }
         if (!nextPassTools && !previewTools && simpleTarget) {
           const source = await readRange(root, simpleTarget, 0, 4000).catch(() => undefined);
           if (source && !source.truncated) {
@@ -1602,7 +1759,10 @@ export class Agent {
                           ? new Set([...implementationTools, 'search_code', 'enable_tool_group'])
                           : new Set(['run_validation', 'typecheck', 'discover_validation_plan'])
                         : undefined;
-        const restriction = nextPassTools ?? focusedTools;
+        const restriction = postScaffoldCall
+          ? new Set([postScaffoldCall.function.name])
+          : (nextPassTools ?? focusedTools);
+        const skipModel = Boolean(postScaffoldCall || (standalonePreview && previewTools));
         const requiresTool =
           nextPassRequiresTool || Boolean(focusedTools && (!standalonePreview || previewTools));
         const wholeFileRecoveryPath = nextWholeFileRecoveryPath ?? compilerRepair?.path;
@@ -1664,7 +1824,7 @@ export class Agent {
         // Large optional schemas must not crowd out a small task's source and plan.
         // Keep newly requested capabilities first when switching tool groups.
         let nativeContext: ReturnType<typeof compactContext> | undefined;
-        if (!requiresTool) {
+        if (!requiresTool && !skipModel) {
           const preferred =
             current.messages.at(-1)?.name === 'enable_tool_group'
               ? [...groups]
@@ -1767,74 +1927,78 @@ export class Agent {
         const outputTokens = focusedWritePath
           ? Math.min(4096, Math.floor(settings.contextTokens / 2))
           : 2048;
-        const context =
-          nativeContext ??
-          compactContext(
-            focusedPatch
-              ? modelMessages
-              : focusedWritePath
-                ? [
-                    modelMessages[0],
-                    {
-                      role: 'user',
-                      content: `${modelMessages[1].content}\n\n${repairInstruction}\n${focusedWriteFeedback}\nReturn the complete corrected source file in a single TypeScript code block. Include all implementations needed by the request. Do not return JSON or a tool envelope.`,
-                    },
-                  ]
-                : forcedToolFormat
+        const context = skipModel
+          ? { messages: [], removedGroups: 0, inputCharacters: 0, budgetCharacters: 0 }
+          : (nativeContext ??
+            compactContext(
+              focusedPatch
+                ? modelMessages
+                : focusedWritePath
                   ? [
-                      ...modelMessages,
+                      modelMessages[0],
                       {
-                        role: 'system' as const,
-                        content: `Call one of these tools using JSON {"name": toolName, "arguments": {...}}. The schema constrains syntax; use the descriptions to choose meaningful arguments. Current user task: ${JSON.stringify(prompt)}. ${repairInstruction} For replace_text, oldText must be copied exactly from the latest file read; newText is the actual implementation, not an explanation or a placeholder. Tools: ${JSON.stringify(availableTools)}`,
+                        role: 'user',
+                        content: `${modelMessages[1].content}\n\n${repairInstruction}\n${focusedWriteFeedback}\nReturn the complete corrected source file in a single TypeScript code block. Include all implementations needed by the request. Do not return JSON or a tool envelope.`,
                       },
                     ]
-                  : modelMessages,
-            settings.contextTokens - (outputTokens - 2048),
-            forcedToolFormat ? 0 : JSON.stringify(availableTools).length,
-          );
+                  : forcedToolFormat
+                    ? [
+                        ...modelMessages,
+                        {
+                          role: 'system' as const,
+                          content: `Call one of these tools using JSON {"name": toolName, "arguments": {...}}. The schema constrains syntax; use the descriptions to choose meaningful arguments. Current user task: ${JSON.stringify(prompt)}. ${repairInstruction} For replace_text, oldText must be copied exactly from the latest file read; newText is the actual implementation, not an explanation or a placeholder. Tools: ${JSON.stringify(availableTools)}`,
+                        },
+                      ]
+                    : modelMessages,
+              settings.contextTokens - (outputTokens - 2048),
+              forcedToolFormat ? 0 : JSON.stringify(availableTools).length,
+            ));
         checkpoint.context = {
           removedGroups: context.removedGroups,
           estimatedInputTokens: Math.ceil(context.inputCharacters / 3),
           inputBudgetTokens: Math.floor(context.budgetCharacters / 3),
         };
         await saveCheckpoint();
-        const answer =
-          standalonePreview && previewTools
-            ? { role: 'assistant' as const, content: '' }
-            : await chat(
-                settings.endpoint,
-                {
-                  model: settings.model,
-                  messages: context.messages,
-                  ...(readOnlyProjectUnderstanding || focusedWritePath
-                    ? {}
-                    : forcedToolFormat
-                      ? {
-                          format: focusedPatch
-                            ? {
-                                type: 'object',
-                                properties: { replacement: { type: 'string' } },
-                                required: ['replacement'],
-                                additionalProperties: false,
-                              }
-                            : forcedToolFormat,
-                        }
-                      : { tools: availableTools }),
-                  options: {
-                    temperature: settings.temperature,
-                    num_ctx: settings.contextTokens,
-                    num_predict: outputTokens,
-                    repeat_penalty: implementationRequested ? 1.1 : 1.15,
-                    repeat_last_n: implementationRequested ? 64 : 256,
-                  },
+        const answer = skipModel
+          ? {
+              role: 'assistant' as const,
+              content: '',
+              tool_calls: postScaffoldCall ? [postScaffoldCall] : undefined,
+            }
+          : await chat(
+              settings.endpoint,
+              {
+                model: settings.model,
+                messages: context.messages,
+                ...(readOnlyProjectUnderstanding || focusedWritePath
+                  ? {}
+                  : forcedToolFormat
+                    ? {
+                        format: focusedPatch
+                          ? {
+                              type: 'object',
+                              properties: { replacement: { type: 'string' } },
+                              required: ['replacement'],
+                              additionalProperties: false,
+                            }
+                          : forcedToolFormat,
+                      }
+                    : { tools: availableTools }),
+                options: {
+                  temperature: settings.temperature,
+                  num_ctx: settings.contextTokens,
+                  num_predict: outputTokens,
+                  repeat_penalty: implementationRequested ? 1.1 : 1.15,
+                  repeat_last_n: implementationRequested ? 64 : 256,
                 },
-                AbortSignal.any([signal, AbortSignal.timeout(600000)]),
-                (text) => {
-                  const active = this.store.value.activeRun!;
-                  active.stream = (active.stream ?? '') + text;
-                  this.emit({ type: 'token', text });
-                },
-              );
+              },
+              AbortSignal.any([signal, AbortSignal.timeout(600000)]),
+              (text) => {
+                const active = this.store.value.activeRun!;
+                active.stream = (active.stream ?? '') + text;
+                this.emit({ type: 'token', text });
+              },
+            );
         if (focusedPatch && !answer.tool_calls?.length) {
           try {
             const replacement = schemas.replace_text.parse({
@@ -2263,6 +2427,7 @@ export class Agent {
           recoveryReadPaths = undefined;
         } else if (
           needsFocusedImplementation() &&
+          !focusedWritePath &&
           !inspectedScaffold &&
           availableNames.has('read_files')
         ) {
@@ -2961,9 +3126,13 @@ export class Agent {
                 title:
                   'Run pnpm install with lifecycle scripts disabled. Packages may download from the configured registry.',
               });
-              result = allow
-                ? JSON.stringify(await installPnpmDependencies(root, signal))
-                : 'Dependency install was declined.';
+              if (!allow) result = 'Dependency install was declined.';
+              else {
+                const installed = await installPnpmDependencies(root, signal);
+                if (installed.exitCode !== 0)
+                  throw new Error(installed.output || 'pnpm install did not complete.');
+                result = JSON.stringify(installed);
+              }
             } else if (name === 'start_local_preview') {
               const allow = await this.permission({
                 id: randomUUID(),
@@ -3008,6 +3177,10 @@ export class Agent {
                   await scaffoldProject(root, args.template, args.name, signal),
                 );
                 invalidateAnalysis(root);
+                if (args.template === 'react') {
+                  map = await analyzeProject(root, this.store, settings, signal);
+                  this.emit({ type: 'map', map });
+                }
                 task.appliedChanges += 1;
                 task.fingerprint = await workspaceFingerprint(root, signal).catch(() => '');
                 await publishTask();
@@ -3672,6 +3845,20 @@ export class Agent {
                 });
               }
             }
+          }
+          if (
+            postScaffoldCall?.function.name === name &&
+            name === 'install_pnpm_dependencies' &&
+            (this.actionDeclined || result.startsWith('Tool error:'))
+          ) {
+            task.outcome = 'failed';
+            await add(
+              'assistant',
+              this.actionDeclined
+                ? 'The page was updated, but dependency installation was declined, so Forge could not verify it.'
+                : `The page was updated, but the dependency installer failed. ${result.replace(/^Tool error: /, '')}`,
+            );
+            break;
           }
           if (name === 'browser_verify_gallery' && !result.startsWith('Tool error:')) {
             const receipt = JSON.parse(result) as Awaited<ReturnType<typeof verifyEmojiGallery>>;

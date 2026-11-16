@@ -1,3 +1,4 @@
+import { GRILL_ME_SKILL } from './grill-me';
 import {
   SECURITY_ARCHITECTURE_SKILLS,
   type SecurityArchitectureSkillId,
@@ -35,6 +36,7 @@ import {
 import type { McpProfile, McpConnection } from './mcp';
 export type Page = 'agent' | 'build' | 'models' | 'skills' | 'training' | 'settings';
 export type SkillId =
+  | 'grill-me'
   | 'typescript'
   | 'react'
   | 'react-native'
@@ -184,6 +186,7 @@ export interface ClarificationOption {
   id: string;
   label: string;
   description?: string;
+  recommended?: boolean;
 }
 export interface Clarification {
   id: string;
@@ -475,6 +478,7 @@ export const SKILLS: {
   required?: boolean;
 }[] = [
   ...SECURITY_ARCHITECTURE_SKILLS.map((skill) => ({ ...skill, tags: [...skill.tags] })),
+  GRILL_ME_SKILL,
   ...PLATFORM_SKILLS,
   ...QUALITY_SKILLS.map((skill) => ({ ...skill, tags: [...skill.tags] })),
   ...DESIGN_SKILLS.map((skill) => ({ ...skill, tags: [...skill.tags] })),

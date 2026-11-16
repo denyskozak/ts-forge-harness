@@ -740,6 +740,7 @@ export default function App() {
                   )}
                   {clarification && (
                     <div
+                      key={clarification.id}
                       className="clarification-card"
                       role="group"
                       aria-label="Forge question"
@@ -756,10 +757,14 @@ export default function App() {
                         {clarification.options.map((option) => (
                           <button
                             key={option.id}
+                            className={option.recommended ? 'is-recommended' : undefined}
                             disabled={answerPending}
                             onClick={() => void answerClarification(option.id)}
                           >
                             <strong>{option.label}</strong>
+                            {option.recommended && (
+                              <span className="recommended-tag">Recommended</span>
+                            )}
                             {option.description && <span>{option.description}</span>}
                           </button>
                         ))}
@@ -1084,24 +1089,43 @@ export default function App() {
                     >
                       <div className="skill-card-top">
                         <span className={`skill-logo ${skill.id}`}>{skillGlyph(skill.id)}</span>
-                        <button
-                          disabled={skill.required}
-                          title={skill.required ? 'Required in every agent run' : undefined}
-                          aria-label={`Toggle ${skill.name}`}
-                          aria-pressed={skill.required || state.settings.skills.includes(skill.id)}
-                          className={`toggle ${skill.required || state.settings.skills.includes(skill.id) ? 'on' : ''}`}
-                          onClick={() =>
-                            saveSettings({
-                              ...state.settings,
-                              skills:
-                                skill.required || state.settings.skills.includes(skill.id)
-                                  ? state.settings.skills.filter((id) => id !== skill.id)
-                                  : [...state.settings.skills, skill.id],
-                            })
-                          }
-                        >
-                          <span />
-                        </button>
+                        {skill.id === 'grill-me' ? (
+                          <button
+                            disabled={busy}
+                            className="text-button"
+                            onClick={() => {
+                              dismissNextStep();
+                              setPage('agent');
+                              setPrompt((draft) =>
+                                draft.startsWith('/grill-me') ? draft : '/grill-me ' + draft,
+                              );
+                              requestAnimationFrame(() => promptRef.current?.focus());
+                            }}
+                          >
+                            Use
+                          </button>
+                        ) : (
+                          <button
+                            disabled={skill.required}
+                            title={skill.required ? 'Required in every agent run' : undefined}
+                            aria-label={`Toggle ${skill.name}`}
+                            aria-pressed={
+                              skill.required || state.settings.skills.includes(skill.id)
+                            }
+                            className={`toggle ${skill.required || state.settings.skills.includes(skill.id) ? 'on' : ''}`}
+                            onClick={() =>
+                              saveSettings({
+                                ...state.settings,
+                                skills:
+                                  skill.required || state.settings.skills.includes(skill.id)
+                                    ? state.settings.skills.filter((id) => id !== skill.id)
+                                    : [...state.settings.skills, skill.id],
+                              })
+                            }
+                          >
+                            <span />
+                          </button>
+                        )}
                       </div>
                       <h2>{skill.name}</h2>
                       <p>{skill.description}</p>

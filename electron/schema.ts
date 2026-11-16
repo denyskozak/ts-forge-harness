@@ -20,6 +20,7 @@ export const settingsSchema = z.object({
     .array(
       z.enum([
         'typescript',
+        'grill-me',
         'react',
         'react-native',
         'next',
@@ -166,6 +167,7 @@ const clarification = z.object({
         id: z.string(),
         label: z.string(),
         description: z.string().optional(),
+        recommended: z.boolean().optional(),
       }),
     )
     .min(2)

@@ -2061,27 +2061,47 @@ small {
   border: 1px solid #8471ad;
   background: #211f28;
   border-radius: 9px;
-  animation: question-glow 2.2s ease-in-out infinite;
+  animation: clarification-enter 160ms ease-out both;
 }
 .clarification-card::before {
   content: '';
   position: absolute;
-  inset: -1px;
-  border-radius: inherit;
+  inset: 0 7px auto;
+  height: 2px;
   pointer-events: none;
-  box-shadow:
-    0 0 0 1px rgba(178, 143, 255, 0.18),
-    0 0 28px rgba(142, 105, 221, 0.2);
+  border-radius: 2px;
+  background: linear-gradient(
+    105deg,
+    transparent 27%,
+    #897aa8 44%,
+    #eeeaf9 50%,
+    #a396bf 56%,
+    transparent 73%
+  );
+  background-size: 260% 100%;
+  animation: clarification-sheen 560ms ease-out both;
 }
-@keyframes question-glow {
-  0%,
-  100% {
-    border-color: #71608f;
-    box-shadow: 0 0 10px rgba(142, 105, 221, 0.14);
+@keyframes clarification-enter {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
   }
-  50% {
-    border-color: #b18ae8;
-    box-shadow: 0 0 26px rgba(157, 111, 243, 0.38);
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes clarification-sheen {
+  from {
+    background-position: 100% 0;
+    opacity: 0;
+  }
+  24% {
+    opacity: 0.85;
+  }
+  to {
+    background-position: 0 0;
+    opacity: 0;
   }
 }
 .clarification-heading {
@@ -2111,8 +2131,12 @@ small {
   justify-self: end;
 }
 @media (prefers-reduced-motion: reduce) {
-  .clarification-card {
+  .clarification-card,
+  .clarification-card::before {
     animation: none;
+  }
+  .clarification-card::before {
+    opacity: 0;
   }
 }
 .clarification-heading > svg {
@@ -2144,6 +2168,11 @@ small {
   margin-top: 12px;
 }
 .clarification-options button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  overflow-wrap: anywhere;
   min-width: 0;
   padding: 9px 10px;
   border: 1px solid #504a5d;
@@ -2161,6 +2190,13 @@ small {
 .clarification-options button.is-selected {
   border-color: #a78bd1;
   background: #342e41;
+}
+.clarification-options button.is-recommended {
+  border-color: #9886bc;
+}
+.clarification-options .recommended-tag {
+  color: #d8c7f8;
+  font-weight: 600;
 }
 .clarification-options strong,
 .clarification-options span {
