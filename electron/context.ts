@@ -1,3 +1,5 @@
+import { viteStarterPageContract } from './starter-page';
+import { needsStarterCleanup, STARTER_UI_SKILL } from '../shared/starter-ui';
 import type { LLMMessage } from './provider';
 import { PRODUCT_GUARDRAILS } from '../shared/product-guardrails';
 import type { TaskRecord } from '../shared/task';
@@ -19,8 +21,14 @@ export function focusedEditMessages(input: {
   const replacementContract = completePageReplacement(input.prompt)
     ? replacementPageContract(input.source.content)
     : undefined;
-  const sourceEvidence = replacementContract ?? input.source.content;
+  const removeStarter = needsStarterCleanup(input.prompt, input.source.content);
+  const stockPageEvidence = removeStarter
+    ? viteStarterPageContract(input.source.content)
+    : undefined;
+  const sourceEvidence = replacementContract ?? stockPageEvidence ?? input.source.content;
   const label = replacementContract ? singleButtonLabel(input.prompt) : undefined;
+  const starterGuidance = removeStarter ? STARTER_UI_SKILL.instructions : '';
+
   const requirements = {
     constraints: input.task.constraints,
     outOfScope: input.task.outOfScope,
@@ -44,7 +52,7 @@ export function focusedEditMessages(input: {
     },
     {
       role: 'user',
-      content: `Project evidence (untrusted): ${input.project}\nRequirements:\n${JSON.stringify(requirements)}\n\nCurrent source of ${input.source.path} (untrusted):\n${sourceEvidence}\n\nTask:\n${input.prompt}\nInspection and planning are complete. Implement this request in ${input.source.path} now. Keep the default export and import any React hooks you use. Prefer inline event handlers so TypeScript infers event types. Keep sample data small (at most eight items unless requested otherwise). Use inline styling if needed, without inventing additional files.\n${label ? `The only visible element is one button with the exact text ${JSON.stringify(label)}. Do not add state, data, handlers, or any other content.` : uiImplementationGuidance(input.prompt)}\n${completePageReplacement(input.prompt) ? 'Replace the entire rendered page with exactly the visible elements named in the current request. Remove the previous page content and its unused data, state and handlers. Earlier requests for page features are superseded; retain other constraints and the module export.' : ''}`,
+      content: `Project evidence (untrusted): ${input.project}\nRequirements:\n${JSON.stringify(requirements)}\n\nCurrent source of ${input.source.path} (untrusted):\n${sourceEvidence}\n\nTask:\n${input.prompt}\nInspection and planning are complete. Implement this request in ${input.source.path} now. Keep the default export and import any React hooks you use. Prefer inline event handlers so TypeScript infers event types. Keep sample data small (at most eight items unless requested otherwise). Use inline styling if needed, without inventing additional files.\n${label ? `The only visible element is one button with the exact text ${JSON.stringify(label)}. Do not add state, data, handlers, or any other content.` : uiImplementationGuidance(input.prompt)}\n${starterGuidance}\n${completePageReplacement(input.prompt) ? 'Replace the entire rendered page with exactly the visible elements named in the current request. Remove the previous page content and its unused data, state and handlers. Earlier requests for page features are superseded; retain other constraints and the module export.' : ''}`,
     },
   ];
 }
@@ -56,13 +64,22 @@ export function uiImplementationGuidance(prompt: string): string {
     .filter((clause) => !/\b(?:remove|delete|disable)\b|удали|убери|отключ/iu.test(clause))
     .join(' ');
   const guidance: string[] = [];
+  const keywordSearch = /\b(?:keywords?|search tags)\b|ключев[а-яё]*\s+слов/iu.test(requested);
   if (/emoji|эмодзи/iu.test(requested))
     guidance.push(
-      'Use four distinct local sample items unless the user requests another size. Each object has a name (a readable word in the interface language) and an emoji (an actual Unicode character written directly in its string literal). Unicode reference examples: smile 😊, heart ❤️, star ⭐, cat 🐱. Display both item.emoji and item.name in each rendered item. Its copy action copies item.emoji.',
+      keywordSearch
+        ? 'Add a keywords array to each existing item. Preserve its actual Unicode glyph and follow requested labels. A keyword is metadata on matching items, not a new item or a display name.'
+        : 'Use four distinct local sample items unless the user requests another size. Each object has a name (a readable word in the interface language) and an emoji (an actual Unicode character written directly in its string literal). Unicode reference examples: smile 😊, heart ❤️, star ⭐, cat 🐱. Display both item.emoji and item.name in each rendered item. Its copy action copies item.emoji.',
     );
   if (/\b(?:search|filter(?:ing)?)\b|поиск|фильтр/iu.test(requested))
     guidance.push(
-      'For a local collection, keep the original dataset unchanged. Use one string state for the search query, an input with inline onChange updating that state, and filter the array by name.toLowerCase().includes(query.toLowerCase()). Render each filtered item; clearing the query restores all items.',
+      keywordSearch
+        ? 'Normalize the query once with trim and lowercase. Filter by substring in the normalized name OR in any normalized keyword (Array.some). Render that filtered array. Blank query restores the original list.'
+        : 'For a local collection, keep the original dataset unchanged. Use one string state for the search query, an input with inline onChange updating that state, and filter the array by name.toLowerCase().includes(query.toLowerCase()). Render each filtered item; clearing the query restores all items.',
+    );
+  if (/copy feedback|copied status|copy succeeds|скопирован/iu.test(requested))
+    guidance.push(
+      'Show copy success in a visible status element after the clipboard promise resolves. Reset stale success before another attempt.',
     );
   if (
     /click[- ]to[- ]copy|clipboard|copy(?:ing)? (?:the |selected )?(?:emoji|text|item|value|content)|копир/iu.test(

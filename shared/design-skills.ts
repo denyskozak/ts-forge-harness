@@ -1,4 +1,9 @@
+import { STARTER_UI_SKILL } from './starter-ui';
+import { UPSTREAM_DESIGN_SKILLS } from './upstream-design-skills';
+
 export const DESIGN_SKILLS = [
+  STARTER_UI_SKILL,
+  ...UPSTREAM_DESIGN_SKILLS,
   {
     id: 'product-ui-design',
     name: 'Product UI Design',
@@ -77,7 +82,7 @@ export function designSkillsForProject(
     frameworks.some((item) => /React|Next\.js|Expo/iu.test(item)) ||
     paths.some((item) => /(?:^|\/)(?:app|pages|screens|components|apps\/web)(?:\/|$)/iu.test(item));
   const uiRequest =
-    /\bui\b|\bux\b|interface|screen|layout|component|page|form|dashboard|storefront|responsive|accessib|design|style|интерфейс|экран|дизайн|верстк|форм[аы]|адаптив|доступност/iu.test(
+    /\bui\b|\bux\b|interface|screen|layout|component|page|form|dashboard|storefront|responsive|accessib|design|style|animation|motion|анимац|интерфейс|экран|дизайн|верстк|форм[аы]|адаптив|доступност/iu.test(
       prompt,
     );
   const buildsProduct =
@@ -86,6 +91,14 @@ export function designSkillsForProject(
 
   selected.add('product-ui-design');
   selected.add('accessibility-design');
+  if (buildsProduct && frameworks.some((framework) => /^Vite$/iu.test(framework)))
+    selected.add('starter-ui-cleanup');
+  if (/\b(?:art direction|visual identity|distinctive design)\b|айдентик|арт-дирекц/iu.test(prompt))
+    selected.add('anthropic-frontend-design');
+  if (/\b(?:ux audit|usability review)\b|аудит интерфейс|аудит удобств/iu.test(prompt))
+    selected.add('ui-ux-pro-max');
+  if (/\b(?:animation|motion|transition|fade|shimmer)\b|анимац|блик|перелив/iu.test(prompt))
+    selected.add('impeccable-motion');
 
   if (/design|style|layout|hierarchy|visual|дизайн|стил|внешн|иерарх|визуал/iu.test(prompt)) {
     selected.add('visual-hierarchy');
@@ -94,13 +107,25 @@ export function designSkillsForProject(
   if (/responsive|mobile|tablet|viewport|react.native|expo|адаптив|мобил|планшет/iu.test(prompt)) {
     selected.add('responsive-design');
   }
-  if (/form|input|auth|login|register|checkout|settings|форм|пол[ея]|авторизац|регистрац|настройк/iu.test(prompt)) {
+  if (
+    /form|input|auth|login|register|checkout|settings|форм|пол[ея]|авторизац|регистрац|настройк/iu.test(
+      prompt,
+    )
+  ) {
     selected.add('forms-interaction-design');
   }
-  if (/table|dashboard|catalog|store|search|filter|list|таблиц|дашборд|каталог|магазин|поиск|фильтр|список/iu.test(prompt)) {
+  if (
+    /table|dashboard|catalog|store|search|filter|list|таблиц|дашборд|каталог|магазин|поиск|фильтр|список/iu.test(
+      prompt,
+    )
+  ) {
     selected.add('data-interface-design');
   }
-  if (/review|polish|visual|design|style|дизайн|стил|редизайн|проверь.*интерфейс|улучш.*интерфейс/iu.test(prompt)) {
+  if (
+    /review|polish|visual|design|style|дизайн|стил|редизайн|проверь.*интерфейс|улучш.*интерфейс/iu.test(
+      prompt,
+    )
+  ) {
     selected.add('visual-review');
   }
   return [...selected];

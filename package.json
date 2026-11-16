@@ -79,6 +79,10 @@
     },
     "extraResources": [
       {
+        "from": "docs/third-party/design-skills",
+        "to": "third-party/design-skills"
+      },
+      {
         "from": "node_modules/typescript",
         "to": "compiler",
         "filter": [

@@ -81,17 +81,10 @@ test('a compiler pass cannot finish a self-contained page with an obviously miss
     else if (index === 1) {
       assert.equal(JSON.parse(body).format, undefined);
       message = { content: '```tsx\n' + source + '\n```' };
-    } else if (index === 3) {
+    } else if (index === 2) {
       repairBody = body;
       message = { content: JSON.stringify({ replacement: copied, path: 'elsewhere.tsx' }) };
-    } else if (index === 2 || index === 4)
-      message = {
-        content: '',
-        tool_calls: [
-          { function: { name: 'run_validation', arguments: { recipe: 'typescript.check' } } },
-        ],
-      };
-    else message = { content: 'Done' };
+    } else message = { content: 'Done' };
     res.end(JSON.stringify({ done: true, done_reason: 'stop', message }) + '\n');
   });
   server.listen(0, '127.0.0.1');
@@ -123,7 +116,8 @@ test('a compiler pass cannot finish a self-contained page with an obviously miss
   });
   await agent.run(prompt);
   assert.deepEqual(errors, []);
-  assert.equal(step, 5);
+  // Declared checks are executed by Forge around the model-generated repair.
+  assert.equal(step, 3);
   assert.equal(approvals, 4);
   assert.match(repairBody, /missing UI interactions/);
   assert.deepEqual(JSON.parse(repairBody).format.required, ['replacement']);

@@ -1,3 +1,4 @@
+import { needsStarterCleanup, viteDemoParts } from '../shared/starter-ui';
 import { GRILL_ME_COMMAND, GRILL_ME_SKILL } from '../shared/grill-me';
 import { grillMeFormat, grillMePlanFormat, parseGrillMeTurn } from './grill-me';
 import {
@@ -767,6 +768,8 @@ export function isFocusedExistingEdit(prompt: string, paths: string[], existingP
     )
   );
 }
+
+const FOCUSED_PAGE_SOURCE_LIMIT = 6000;
 
 export function simpleReactEditTarget(prompt: string, sourcePaths: string[], frameworks: string[]) {
   if (
@@ -1639,24 +1642,24 @@ Use the language of the interview request.`,
             }
           | undefined = pendingInteractionRepair;
         pendingInteractionRepair = undefined;
-        const smallReactPage =
-          implementationRequested && checkpoint.planned
-            ? simpleReactEditTarget(
-                prompt,
-                map.entries
-                  .filter((entry) => /\.[cm]?tsx?$/.test(entry.path))
-                  .map((entry) => entry.path),
-                map.mentalModel.frameworks.map((framework) => framework.name),
-              )
-            : undefined;
+        const smallReactPage = implementationRequested
+          ? simpleReactEditTarget(
+              prompt,
+              map.entries
+                .filter((entry) => /\.[cm]?tsx?$/.test(entry.path))
+                .map((entry) => entry.path),
+              map.mentalModel.frameworks.map((framework) => framework.name),
+            )
+          : undefined;
         const simpleTarget =
-          (!requestedScaffold && !task.appliedChanges) ||
-          (requestedScaffold === 'react' && needsFocusedImplementation())
+          checkpoint.planned &&
+          ((!requestedScaffold && !task.appliedChanges) ||
+            (requestedScaffold === 'react' && needsFocusedImplementation()))
             ? smallReactPage
             : undefined;
-        let postScaffoldCall: NonNullable<LLMMessage['tool_calls']>[number] | undefined;
+        let focusedPageCheck: NonNullable<LLMMessage['tool_calls']>[number] | undefined;
         if (
-          requestedScaffold === 'react' &&
+          (!requestedScaffold || requestedScaffold === 'react') &&
           smallReactPage &&
           implementationSatisfied() &&
           !this.actionDeclined &&
@@ -1675,18 +1678,21 @@ Use the language of the interview request.`,
             }
           }
           if (
+            requestedScaffold === 'react' &&
             enabledNames.has('install_pnpm_dependencies') &&
             !successfulReceipt('install_pnpm_dependencies')
           )
-            postScaffoldCall = { function: { name: 'install_pnpm_dependencies', arguments: {} } };
+            focusedPageCheck = { function: { name: 'install_pnpm_dependencies', arguments: {} } };
           else if (enabledNames.has('run_validation') && !hasCurrentValidationFailure()) {
             const check = pendingRequiredChecks()[0];
             if (check)
-              postScaffoldCall = { function: { name: 'run_validation', arguments: { ...check } } };
+              focusedPageCheck = { function: { name: 'run_validation', arguments: { ...check } } };
           }
         }
         if (!nextPassTools && !previewTools && simpleTarget) {
-          const source = await readRange(root, simpleTarget, 0, 4000).catch(() => undefined);
+          const source = await readRange(root, simpleTarget, 0, FOCUSED_PAGE_SOURCE_LIMIT).catch(
+            () => undefined,
+          );
           if (source && !source.truncated) {
             observed.set(simpleTarget, { hash: source.hash, full: true });
             compilerRepair = { path: simpleTarget, content: source.content };
@@ -1759,10 +1765,10 @@ Use the language of the interview request.`,
                           ? new Set([...implementationTools, 'search_code', 'enable_tool_group'])
                           : new Set(['run_validation', 'typecheck', 'discover_validation_plan'])
                         : undefined;
-        const restriction = postScaffoldCall
-          ? new Set([postScaffoldCall.function.name])
+        const restriction = focusedPageCheck
+          ? new Set([focusedPageCheck.function.name])
           : (nextPassTools ?? focusedTools);
-        const skipModel = Boolean(postScaffoldCall || (standalonePreview && previewTools));
+        const skipModel = Boolean(focusedPageCheck || (standalonePreview && previewTools));
         const requiresTool =
           nextPassRequiresTool || Boolean(focusedTools && (!standalonePreview || previewTools));
         const wholeFileRecoveryPath = nextWholeFileRecoveryPath ?? compilerRepair?.path;
@@ -1869,8 +1875,30 @@ Use the language of the interview request.`,
             )}. Fix these concrete diagnostics before rerunning the same check. A missing component or function needs a real implementation and the correct import/export, not another reference to the undefined name. Preserve the user's requested behavior; do not remove the feature or replace it with a stub to pass compilation.`
           : '';
         let modelMessages = messages;
+        if (
+          smallReactPage &&
+          !checkpoint.planned &&
+          availableTools.length === 1 &&
+          availableTools[0].function.name === 'plan_task'
+        ) {
+          const check = map.entries.some((entry) => entry.path === 'tsconfig.app.json')
+            ? 'tsconfig.app.json'
+            : 'tsconfig.json';
+          modelMessages = [
+            {
+              role: 'system',
+              content: `Plan a bounded change to the existing React page. ${PRODUCT_GUARDRAILS} Respect the requested behavior and preserve unrelated features. Plan before writing any files.`,
+            },
+            {
+              role: 'user',
+              content: `Request: ${prompt}
+Inspected project evidence: ${smallReactPage} is the React page. Call plan_task with a short goal, observable criteria and a typescript.check for ${check}.`,
+            },
+          ];
+        }
         let focusedWritePath: string | undefined;
         let expectedButtonLabel: string | undefined;
+        let removeViteDemo = false;
         const focusedPatch =
           !this.actionDeclined &&
           compilerPatch &&
@@ -1894,9 +1922,10 @@ Use the language of the interview request.`,
           availableTools.length === 1 &&
           availableTools[0].function.name === 'write_file'
         ) {
-          const source = await readRange(root, wholeFileRecoveryPath, 0, 4000);
+          const source = await readRange(root, wholeFileRecoveryPath, 0, FOCUSED_PAGE_SOURCE_LIMIT);
           if (!source.truncated) {
             focusedWritePath = wholeFileRecoveryPath;
+            removeViteDemo = needsStarterCleanup(prompt, source.content);
             if (replacementPageContract(source.content))
               expectedButtonLabel = singleButtonLabel(prompt);
             const files = await scanFiles(root, 10000, signal);
@@ -1963,7 +1992,7 @@ Use the language of the interview request.`,
           ? {
               role: 'assistant' as const,
               content: '',
-              tool_calls: postScaffoldCall ? [postScaffoldCall] : undefined,
+              tool_calls: focusedPageCheck ? [focusedPageCheck] : undefined,
             }
           : await chat(
               settings.endpoint,
@@ -2018,6 +2047,11 @@ Use the language of the interview request.`,
               path: focusedWritePath,
               content: sourceResponse(answer.content, answer.finishReason),
             });
+            const remainingDemo = removeViteDemo ? viteDemoParts(file.content) : [];
+            if (remainingDemo.length)
+              throw new Error(
+                `Remove the confirmed starter UI from the candidate: ${remainingDemo.join(', ')}. Keep the requested app and any unrelated user features.`,
+              );
             if (expectedButtonLabel && !matchesSingleButtonPage(file.content, expectedButtonLabel))
               throw new Error(
                 `Return a page with exactly one button labeled ${JSON.stringify(expectedButtonLabel)}.`,
@@ -2028,9 +2062,10 @@ Use the language of the interview request.`,
             focusedWriteFeedback = '';
           } catch (error) {
             if (focusedWriteRepairs++ < 2) {
-              focusedWriteFeedback = expectedButtonLabel
-                ? `The previous candidate was rejected before it changed any file. ${(error as Error).message} Only the exact current request applies. Return one complete TypeScript code block.`
-                : 'The previous response was incomplete or invalid source and was not applied. Generate a shorter complete implementation in a single TypeScript code block. Avoid repetitive data and decorative markup; close the code block within the response budget.';
+              focusedWriteFeedback =
+                expectedButtonLabel || removeViteDemo
+                  ? `The previous candidate was rejected before it changed any file. ${(error as Error).message} Only the exact current request applies. Return one complete TypeScript code block.`
+                  : 'The previous response was incomplete or invalid source and was not applied. Generate a shorter complete implementation in a single TypeScript code block. Avoid repetitive data and decorative markup; close the code block within the response budget.';
               nextPassTools = new Set(['write_file']);
               nextWholeFileRecoveryPath = focusedWritePath;
               nextPassRequiresTool = true;
@@ -2038,12 +2073,14 @@ Use the language of the interview request.`,
               this.status('Regenerating incomplete source response; no file was changed');
               continue;
             }
-            if (expectedButtonLabel) {
+            if (expectedButtonLabel || removeViteDemo) {
               delete this.store.value.activeRun!.stream;
               task.outcome = 'failed';
               await add(
                 'assistant',
-                'I could not generate the requested single-button page. The proposed changes were rejected.',
+                expectedButtonLabel
+                  ? 'I could not generate the requested single-button page. The proposed changes were rejected.'
+                  : 'I could not generate the requested page without the confirmed Vite demo content. The proposed changes were rejected.',
               );
               break;
             }
@@ -3847,7 +3884,7 @@ Use the language of the interview request.`,
             }
           }
           if (
-            postScaffoldCall?.function.name === name &&
+            focusedPageCheck?.function.name === name &&
             name === 'install_pnpm_dependencies' &&
             (this.actionDeclined || result.startsWith('Tool error:'))
           ) {
@@ -3970,7 +4007,7 @@ Use the language of the interview request.`,
             map.mentalModel.frameworks.map((framework) => framework.name),
           );
           const source = pageTarget
-            ? await readRange(root, pageTarget, 0, 4000).catch(() => undefined)
+            ? await readRange(root, pageTarget, 0, FOCUSED_PAGE_SOURCE_LIMIT).catch(() => undefined)
             : undefined;
           const missing =
             source && !source.truncated
