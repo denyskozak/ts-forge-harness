@@ -40,6 +40,7 @@ export const TOOL_GROUPS = {
   browser: [
     'browser_open',
     'browser_snapshot',
+    'browser_verify_gallery',
     'browser_click',
     'browser_fill',
     'browser_press',

@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { replacementPageContract } from '../electron/page-replacement';
+import {
+  matchesSingleButtonPage,
+  replacementPageContract,
+  singleButtonLabel,
+} from '../electron/page-replacement';
 import { completePageReplacement, focusedEditMessages } from '../electron/context';
 
 test('a fully replaced standalone page retains its module contract without old UI priming', () => {
@@ -55,4 +59,40 @@ test('props, other exports and module side effects keep the full source availabl
     });
     assert.ok(messages[1].content.includes(source));
   }
+});
+
+test('a single-button replacement ignores superseded gallery instructions and rejects gallery output', () => {
+  const prompt =
+    'Remove all existing elements from the page and leave only a single button with the text "Hello World".';
+  const source = 'export default function App() { return <main><h1>Gallery</h1><input /></main>; }';
+  const messages = focusedEditMessages({
+    prompt,
+    source: { path: 'App.tsx', content: source },
+    project: 'React',
+    earlierRequests: ['Build an emoji gallery with search.', 'Keep the interface in Portuguese.'],
+    decisions: [],
+    task: {
+      constraints: [],
+      outOfScope: [],
+      criteria: [{ id: 'old', description: 'Restore earlier emoji gallery' }],
+    },
+  });
+  assert.doesNotMatch(messages[1].content, /emoji gallery|<input/);
+  assert.match(messages[1].content, /Portuguese/);
+  assert.equal(singleButtonLabel(prompt), 'Hello World');
+  assert.equal(matchesSingleButtonPage(source, 'Hello World'), false);
+  assert.equal(
+    matchesSingleButtonPage(
+      'export default () => <main><button>Hello World</button><span>Gallery</span></main>;',
+      'Hello World',
+    ),
+    false,
+  );
+  assert.equal(
+    matchesSingleButtonPage(
+      'export default () => <main><button>Hello World</button></main>;',
+      'Hello World',
+    ),
+    true,
+  );
 });

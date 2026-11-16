@@ -41,7 +41,6 @@ await writeFile(
 let step = 0;
 let featureStep = -1;
 let browserStep = -1;
-let browserUrl = '';
 const server = createServer(async (req, res) => {
   let raw = '';
   for await (const chunk of req) raw += chunk;
@@ -63,9 +62,16 @@ const server = createServer(async (req, res) => {
     );
   }
   if (browserStep >= 0) {
+    // Browser setup runs in Forge. The first model reply still needs to be
+    // retried when it answers in prose instead of interacting with the page.
+    if (browserStep++ === 0)
+      return res.end(
+        JSON.stringify({
+          message: { content: 'Please confirm how to open the browser.' },
+          done: true,
+        }) + '\n',
+      );
     const calls = [
-      { name: 'browser_open', arguments: { url: browserUrl } },
-      { name: 'browser_snapshot', arguments: {} },
       { name: 'browser_fill', arguments: { selector: '#name', value: 'Forge' } },
       { name: 'browser_select', arguments: { selector: '#theme', value: 'dark' } },
       { name: 'browser_wait', arguments: { selector: '#action' } },
@@ -77,7 +83,7 @@ const server = createServer(async (req, res) => {
       { name: 'browser_viewport', arguments: { preset: 'phone' } },
       { name: 'browser_screenshot', arguments: {} },
     ];
-    const call = calls[browserStep++];
+    const call = calls[browserStep - 2];
     return res.end(
       JSON.stringify({
         message: call
@@ -338,14 +344,11 @@ try {
       ),
     )
     .toBe(true);
-  browserUrl = await page.evaluate(() =>
-    window.forge.developmentProcesses().then((items) => items.find((item) => item.running).urls[0]),
-  );
   browserStep = 0;
   await page.getByRole('button', { name: /^Workspace/ }).click();
   await page
     .getByRole('textbox', { name: 'Message Forge' })
-    .fill('Inspect the local browser preview and verify its controls.');
+    .fill('Open your project in a web browser and verify its controls.');
   await page.getByRole('button', { name: 'Run task' }).click();
   await page.getByRole('button', { name: 'Open browser', exact: true }).click();
   await page.getByRole('button', { name: 'Stop agent' }).waitFor({ state: 'hidden' });

@@ -70,6 +70,7 @@ import {
   browserScroll,
   browserViewport,
   browserScenario,
+  verifyEmojiGallery,
   checkLocalHttp,
   inspectLocalPreview,
   installPnpmDependencies,
@@ -128,6 +129,11 @@ import {
 import { runValidation, workspaceFingerprint } from './validation';
 import { compilerExcerpt, compilerRepairMessages } from './compiler-repair';
 import { sourceResponse } from './source-response';
+import {
+  matchesSingleButtonPage,
+  replacementPageContract,
+  singleButtonLabel,
+} from './page-replacement';
 import { missingClipboardInteraction } from './interaction-repair';
 import {
   compactContext,
@@ -378,6 +384,7 @@ const schemas = {
   stop_package_process: z.object({ id: z.string().uuid() }),
   browser_open: z.object({ url: z.string().url().max(500) }),
   browser_snapshot: z.object({}),
+  browser_verify_gallery: z.object({}),
   browser_click: z.object({ selector: z.string().min(1).max(500) }),
   browser_fill: z.object({ selector: z.string().min(1).max(500), value: z.string().max(5000) }),
   browser_press: z.object({
@@ -588,6 +595,8 @@ const descriptions: Record<keyof typeof schemas, string> = {
     'Start an existing package.json script as a managed development process after approval. Returns its id, logs and detected local URLs.',
   list_package_processes: 'List managed project processes with recent logs, URLs and exit status.',
   stop_package_process: 'Stop one managed process belonging to the active workspace.',
+  browser_verify_gallery:
+    'Verify search and clipboard copying in the approved local emoji gallery preview.',
   browser_open:
     'Open a local HTTP preview in the managed headless browser after approval. External URLs are rejected.',
   browser_snapshot:
@@ -675,8 +684,20 @@ export const requestsSnakeRecipe = (prompt: string) => {
   return /\bsnake\b|змейк/iu.test(affirmative);
 };
 
-export const scaffoldTemplateForPrompt = (prompt: string): ProjectTemplate | undefined =>
-  /\br3f\b|react[ -]?three|three[ .]?fiber|three\.js|змей|3d|3д/iu.test(prompt)
+const browserPreviewRequest =
+  /\b(?:open|launch|use|check|test|verify|inspect|run)\b[^.!?\n]{0,120}\b(?:browser|local preview)\b|\b(?:browser|local preview)\b[^.!?\n]{0,60}\b(?:check|test|verify)\b|(?:открой|запусти|проверь|протестируй|пройди|проведи|используй)[^.!?\n]{0,120}браузер/iu;
+const requestsBrowserPreview = (prompt: string) =>
+  browserPreviewRequest.test(prompt) &&
+  !/\b(?:do not|don't|never)\s+(?:open|launch|use|start)\b[^.!?\n]{0,100}\b(?:browser|preview)\b|не\s+(?:открывай|запускай|используй)[^.!?\n]{0,100}браузер/iu.test(
+    prompt,
+  );
+
+export const scaffoldTemplateForPrompt = (prompt: string): ProjectTemplate | undefined => {
+  const stack = prompt.replace(
+    /\b(?:no|without)\s+(?:(?:an?|any|external)\s+)*api\b|без\s+api\b/giu,
+    '',
+  );
+  return /\br3f\b|react[ -]?three|three[ .]?fiber|three\.js|змей|3d|3д/iu.test(prompt)
     ? 'r3f'
     : /\bnext(?:\.js|js)?\b/iu.test(prompt)
       ? 'next'
@@ -684,11 +705,26 @@ export const scaffoldTemplateForPrompt = (prompt: string): ProjectTemplate | und
         ? 'expo'
         : /\bt3\b|create[ -]?t3/iu.test(prompt)
           ? 't3'
-          : /\bapi\b|\bhono\b|бекенд|backend/iu.test(prompt)
+          : /\bapi\b|\bhono\b|бекенд|backend/iu.test(stack)
             ? 'api'
-            : /\breact\b|vite|фронтенд|frontend/iu.test(prompt)
+            : /\breact\b|vite|фронтенд|frontend|emoji gallery|галере[яюи] эмодзи/iu.test(stack)
               ? 'react'
               : undefined;
+};
+
+export function scaffoldSourcePaths(files: string[]) {
+  const entrypoint =
+    /(?:^|\/)(?:App|main|index|page|layout|server)\.[cm]?tsx?$|(?:^|\/)\+page\.tsx?$/i;
+  const source = files.filter((file) => /\.[cm]?tsx?$/.test(file) && !/\.d\.ts$/.test(file));
+  return [
+    ...source.filter((file) => entrypoint.test(file)).slice(0, 5),
+    ...files.filter((file) =>
+      /^(?:package\.json|tsconfig\.json|index\.html|vite\.config\.ts)$/.test(file),
+    ),
+    ...source.filter((file) => !entrypoint.test(file)),
+  ].slice(0, 8);
+}
+
 export const productRecipeForPrompt = (
   prompt: string,
 ): 'storefront-react' | 'storefront' | undefined => {
@@ -1061,7 +1097,9 @@ export class Agent {
       if (map.mentalModel.frameworks.some((framework) => framework.name === 'Next.js'))
         effectiveSkills.add('next');
       const understandingRequest = wantsProjectUnderstanding(prompt);
-      const readOnlyProjectUnderstanding = understandingRequest && !requestsProjectChange(prompt);
+      const browserPreviewRequested = requestsBrowserPreview(prompt);
+      const readOnlyProjectUnderstanding =
+        understandingRequest && !requestsProjectChange(prompt) && !browserPreviewRequested;
       let architectureEvidence = '';
       let architecturePaths: string[] = [];
       if (understandingRequest || (requestsProjectChange(prompt) && !requestsReadOnly(prompt))) {
@@ -1143,16 +1181,54 @@ export class Agent {
       if (readOnlyAudit)
         messages[0].content +=
           '\nThis is a read-only security audit. Read relevant source, then report findings and recommendations. Do not plan implementation, modify files or run commands.';
+      const standalonePreview =
+        browserPreviewRequested && !implementationRequested && !readOnlyAudit;
+      if (standalonePreview) {
+        groups.add('development');
+        groups.add('browser');
+        messages.push({
+          role: 'system',
+          content:
+            'The user requested a browser check of the open workspace. Use the local preview tools and perform the requested steps on the real page. Use the snapshot to find controls, then interact and assert actual results. Do not ask whether to open the project or suggest that the user perform the steps. Report missing controls or failed checks from the browser evidence. Do not change project files.',
+        });
+      }
       const previewVerificationRequested =
-        (explicitlyReadOnly || implementationRequested) &&
-        /(?:pnpm\s+dev|dev(?:elopment)?\s+server|loopback|встроенн\w*\s+браузер|открой\w*\s+.*браузер|запусти\w*\s+.*(?:проект|приложен)|проверь\w*\s+.*браузер)/iu.test(
+        !readOnlyAudit &&
+        (browserPreviewRequested ||
+          (implementationRequested &&
+            /(?:pnpm\s+dev|dev(?:elopment)?\s+server|loopback|встроенн\w*\s+браузер|открой\w*\s+.*браузер|запусти\w*\s+.*(?:проект|приложен)|проверь\w*\s+.*браузер)/iu.test(
+              prompt,
+            )));
+      const browserInteractionTools = new Set([
+        'browser_snapshot',
+        'browser_click',
+        'browser_fill',
+        'browser_press',
+        'browser_assert',
+        'browser_screenshot',
+        'browser_wait',
+        'browser_scenario',
+        'browser_select',
+        'browser_scroll',
+        'browser_viewport',
+      ]);
+      const browserChecksRequested =
+        standalonePreview &&
+        /\b(?:check|test|verify|navigate|click|search|fill|assert|steps?)\b|провер|протест|шаг|нажми|поиск/iu.test(
           prompt,
         );
+      const verifyGalleryRequested =
+        standalonePreview &&
+        /emoji gallery|галере[яюи] эмодзи/iu.test(prompt) &&
+        /search|поиск/iu.test(prompt) &&
+        /copy|clipboard|копир|буфер/iu.test(prompt);
+      let browserEvidenceRetries = 0;
       const successfulReceipt = (name: string) =>
         current.messages.findLast(
           (message) =>
             message.role === 'tool' &&
             message.name === name &&
+            (!standalonePreview || message.runId === run.id) &&
             !/^(?:Tool error:|.*declined\.?$)/iu.test(message.content.trim()),
         );
       const receiptValue = (name: string) => {
@@ -1177,16 +1253,26 @@ export class Agent {
       const previewNextTools = () => {
         if (
           !previewVerificationRequested ||
-          !implementationSatisfied() ||
-          pendingRequiredChecks().length
+          (!standalonePreview && (!implementationSatisfied() || pendingRequiredChecks().length))
         )
           return undefined;
         if (!successfulReceipt('package_scripts')) return new Set(['package_scripts']);
-        if (!successfulReceipt('start_package_process')) return new Set(['start_package_process']);
+        if (
+          !successfulReceipt('start_package_process') &&
+          !(
+            standalonePreview &&
+            listPackageProcesses(root).some((item) => item.running && item.urls.length)
+          )
+        )
+          return new Set(['start_package_process']);
         if (!groups.has('browser')) return new Set(['enable_tool_group']);
         if (!successfulReceipt('browser_open')) return new Set(['browser_open']);
         if (!successfulReceipt('browser_snapshot')) return new Set(['browser_snapshot']);
-        if (!hasBrowserAssertion('h1')) return new Set(['browser_assert']);
+        if (verifyGalleryRequested && !successfulReceipt('browser_verify_gallery'))
+          return new Set(['browser_verify_gallery']);
+        if (standalonePreview) return undefined;
+        if ((requestedR3fSnake || requestedProductRecipe) && !hasBrowserAssertion('h1'))
+          return new Set(['browser_assert']);
         if (requestedR3fSnake && !hasBrowserAssertion('[aria-label^="Score "]'))
           return new Set(['browser_assert']);
         if (requestedR3fSnake && !hasBrowserAssertion('canvas')) return new Set(['browser_assert']);
@@ -1208,6 +1294,9 @@ export class Agent {
         return undefined;
       };
       const failureGuard = createFailureGuard();
+      let missingReadCount = 0;
+      let recoveryReadPaths: string[] | undefined;
+      let inspectedScaffold = false;
       let executionRepairs = 0;
       let validationRepairs = 0;
       let toolArgumentRepairs = 0;
@@ -1404,12 +1493,14 @@ export class Agent {
           for (const name of enabledNames)
             if (!READ_ONLY_AUDIT_TOOLS.has(name)) enabledNames.delete(name);
         }
-        const webTool = nextWebResearchTool(
-          prompt,
-          current.messages,
-          settings.webSearch.enabled,
-          implementationRequested,
-        );
+        const webTool = standalonePreview
+          ? undefined
+          : nextWebResearchTool(
+              prompt,
+              current.messages,
+              settings.webSearch.enabled,
+              implementationRequested,
+            );
         if (webTool) groups.add('knowledge');
         if (webTool) enabledNames.add(webTool);
         const previewTools = webTool ? new Set([webTool]) : previewNextTools();
@@ -1480,36 +1571,40 @@ export class Agent {
         }
         const focusedTools = previewTools
           ? previewTools
-          : compilerPatch
-            ? new Set(['replace_text'])
-            : compilerRepair
-              ? new Set(['write_file'])
-              : checkpoint.planned &&
-                  task.appliedChanges === 0 &&
-                  implementationRequested &&
-                  isFocusedExistingEdit(
-                    prompt,
-                    mentionedSourcePaths,
-                    map.entries.map((entry) => entry.path),
-                  )
-                ? new Set([
-                    mentionedSourcePaths.every((filename) => observed.get(filename)?.full)
-                      ? 'replace_text'
-                      : 'read_file',
-                  ])
-                : needsFocusedImplementation()
-                  ? implementationTools
-                  : implementationSatisfied() &&
-                      Boolean(requestedScaffold || requestedProductRecipe) &&
-                      !successfulReceipt('install_pnpm_dependencies')
-                    ? new Set(['install_pnpm_dependencies'])
-                    : implementationSatisfied() && pendingRequiredChecks().length
-                      ? hasCurrentValidationFailure()
-                        ? new Set([...implementationTools, 'search_code', 'enable_tool_group'])
-                        : new Set(['run_validation', 'typecheck', 'discover_validation_plan'])
-                      : undefined;
+          : standalonePreview
+            ? browserInteractionTools
+            : compilerPatch
+              ? new Set(['replace_text'])
+              : compilerRepair
+                ? new Set(['write_file'])
+                : checkpoint.planned &&
+                    task.appliedChanges === 0 &&
+                    implementationRequested &&
+                    missingReadCount === 0 &&
+                    isFocusedExistingEdit(
+                      prompt,
+                      mentionedSourcePaths,
+                      map.entries.map((entry) => entry.path),
+                    )
+                  ? new Set([
+                      mentionedSourcePaths.every((filename) => observed.get(filename)?.full)
+                        ? 'replace_text'
+                        : 'read_file',
+                    ])
+                  : needsFocusedImplementation()
+                    ? implementationTools
+                    : implementationSatisfied() &&
+                        Boolean(requestedScaffold || requestedProductRecipe) &&
+                        !successfulReceipt('install_pnpm_dependencies')
+                      ? new Set(['install_pnpm_dependencies'])
+                      : implementationSatisfied() && pendingRequiredChecks().length
+                        ? hasCurrentValidationFailure()
+                          ? new Set([...implementationTools, 'search_code', 'enable_tool_group'])
+                          : new Set(['run_validation', 'typecheck', 'discover_validation_plan'])
+                        : undefined;
         const restriction = nextPassTools ?? focusedTools;
-        const requiresTool = nextPassRequiresTool || Boolean(focusedTools);
+        const requiresTool =
+          nextPassRequiresTool || Boolean(focusedTools && (!standalonePreview || previewTools));
         const wholeFileRecoveryPath = nextWholeFileRecoveryPath ?? compilerRepair?.path;
         nextWholeFileRecoveryPath = undefined;
         nextPassTools = undefined;
@@ -1615,6 +1710,7 @@ export class Agent {
           : '';
         let modelMessages = messages;
         let focusedWritePath: string | undefined;
+        let expectedButtonLabel: string | undefined;
         const focusedPatch =
           !this.actionDeclined &&
           compilerPatch &&
@@ -1641,6 +1737,8 @@ export class Agent {
           const source = await readRange(root, wholeFileRecoveryPath, 0, 4000);
           if (!source.truncated) {
             focusedWritePath = wholeFileRecoveryPath;
+            if (replacementPageContract(source.content))
+              expectedButtonLabel = singleButtonLabel(prompt);
             const files = await scanFiles(root, 10000, signal);
             observed.set(path.normalize(wholeFileRecoveryPath), { hash: source.hash, full: true });
             modelMessages = focusedEditMessages({
@@ -1700,40 +1798,43 @@ export class Agent {
           inputBudgetTokens: Math.floor(context.budgetCharacters / 3),
         };
         await saveCheckpoint();
-        const answer = await chat(
-          settings.endpoint,
-          {
-            model: settings.model,
-            messages: context.messages,
-            ...(readOnlyProjectUnderstanding || focusedWritePath
-              ? {}
-              : forcedToolFormat
-                ? {
-                    format: focusedPatch
+        const answer =
+          standalonePreview && previewTools
+            ? { role: 'assistant' as const, content: '' }
+            : await chat(
+                settings.endpoint,
+                {
+                  model: settings.model,
+                  messages: context.messages,
+                  ...(readOnlyProjectUnderstanding || focusedWritePath
+                    ? {}
+                    : forcedToolFormat
                       ? {
-                          type: 'object',
-                          properties: { replacement: { type: 'string' } },
-                          required: ['replacement'],
-                          additionalProperties: false,
+                          format: focusedPatch
+                            ? {
+                                type: 'object',
+                                properties: { replacement: { type: 'string' } },
+                                required: ['replacement'],
+                                additionalProperties: false,
+                              }
+                            : forcedToolFormat,
                         }
-                      : forcedToolFormat,
-                  }
-                : { tools: availableTools }),
-            options: {
-              temperature: settings.temperature,
-              num_ctx: settings.contextTokens,
-              num_predict: outputTokens,
-              repeat_penalty: implementationRequested ? 1.1 : 1.15,
-              repeat_last_n: implementationRequested ? 64 : 256,
-            },
-          },
-          AbortSignal.any([signal, AbortSignal.timeout(600000)]),
-          (text) => {
-            const active = this.store.value.activeRun!;
-            active.stream = (active.stream ?? '') + text;
-            this.emit({ type: 'token', text });
-          },
-        );
+                      : { tools: availableTools }),
+                  options: {
+                    temperature: settings.temperature,
+                    num_ctx: settings.contextTokens,
+                    num_predict: outputTokens,
+                    repeat_penalty: implementationRequested ? 1.1 : 1.15,
+                    repeat_last_n: implementationRequested ? 64 : 256,
+                  },
+                },
+                AbortSignal.any([signal, AbortSignal.timeout(600000)]),
+                (text) => {
+                  const active = this.store.value.activeRun!;
+                  active.stream = (active.stream ?? '') + text;
+                  this.emit({ type: 'token', text });
+                },
+              );
         if (focusedPatch && !answer.tool_calls?.length) {
           try {
             const replacement = schemas.replace_text.parse({
@@ -1753,20 +1854,34 @@ export class Agent {
               path: focusedWritePath,
               content: sourceResponse(answer.content, answer.finishReason),
             });
+            if (expectedButtonLabel && !matchesSingleButtonPage(file.content, expectedButtonLabel))
+              throw new Error(
+                `Return a page with exactly one button labeled ${JSON.stringify(expectedButtonLabel)}.`,
+              );
             answer.content = '';
             answer.tool_calls = [{ function: { name: 'write_file', arguments: file } }];
             focusedWriteRepairs = 0;
             focusedWriteFeedback = '';
-          } catch {
+          } catch (error) {
             if (focusedWriteRepairs++ < 2) {
-              focusedWriteFeedback =
-                'The previous response was incomplete or invalid source and was not applied. Generate a shorter complete implementation in a single TypeScript code block. Avoid repetitive data and decorative markup; close the code block within the response budget.';
+              focusedWriteFeedback = expectedButtonLabel
+                ? `The previous candidate was rejected before it changed any file. ${(error as Error).message} Only the exact current request applies. Return one complete TypeScript code block.`
+                : 'The previous response was incomplete or invalid source and was not applied. Generate a shorter complete implementation in a single TypeScript code block. Avoid repetitive data and decorative markup; close the code block within the response budget.';
               nextPassTools = new Set(['write_file']);
               nextWholeFileRecoveryPath = focusedWritePath;
               nextPassRequiresTool = true;
               delete this.store.value.activeRun!.stream;
               this.status('Regenerating incomplete source response; no file was changed');
               continue;
+            }
+            if (expectedButtonLabel) {
+              delete this.store.value.activeRun!.stream;
+              task.outcome = 'failed';
+              await add(
+                'assistant',
+                'I could not generate the requested single-button page. The proposed changes were rejected.',
+              );
+              break;
             }
             // Repeated invalid output follows the ordinary bounded recovery below.
           }
@@ -1817,7 +1932,11 @@ export class Agent {
             }
           }
         }
-        if (!answer.tool_calls?.length && availableNames.has('read_file')) {
+        if (
+          !answer.tool_calls?.length &&
+          missingReadCount === 0 &&
+          availableNames.has('read_file')
+        ) {
           const unread = mentionedSourcePaths.find(
             (filename) =>
               !current!.messages.some(
@@ -1865,7 +1984,10 @@ export class Agent {
         const questionCall = answer.tool_calls?.find(
           (call) => call.function.name === 'ask_user_question',
         );
-        if (questionCall) {
+        if (questionCall && standalonePreview) {
+          answer.content = '';
+          answer.tool_calls = [];
+        } else if (questionCall) {
           const question = schemas.ask_user_question.safeParse(questionCall.function.arguments);
           if (
             !question.success ||
@@ -1939,9 +2061,22 @@ export class Agent {
             ];
           } else if (next?.has('browser_open')) {
             const process = receiptValue('start_package_process');
-            const urls = Array.isArray(process?.urls)
-              ? process.urls.filter((url): url is string => typeof url === 'string')
-              : [];
+            const urls = standalonePreview
+              ? listPackageProcesses(root)
+                  .filter((item) => item.running)
+                  .flatMap((item) => item.urls)
+              : Array.isArray(process?.urls)
+                ? process.urls.filter((url): url is string => typeof url === 'string')
+                : [];
+            if (standalonePreview && !urls.length) {
+              delete this.store.value.activeRun!.stream;
+              await add(
+                'assistant',
+                'The development process did not report a local preview URL. Check its output in Build loop for the startup error or missing URL.',
+              );
+              task.outcome = 'failed';
+              break;
+            }
             answer.content = '';
             answer.tool_calls = [
               {
@@ -1993,6 +2128,9 @@ export class Agent {
                       };
             answer.content = '';
             answer.tool_calls = [{ function: { name: 'browser_assert', arguments: assertion } }];
+          } else if (next?.has('browser_verify_gallery')) {
+            answer.content = '';
+            answer.tool_calls = [{ function: { name: 'browser_verify_gallery', arguments: {} } }];
           } else if (next?.has('browser_screenshot')) {
             answer.content = '';
             answer.tool_calls = [{ function: { name: 'browser_screenshot', arguments: {} } }];
@@ -2112,28 +2250,31 @@ export class Agent {
             ];
           }
         }
-        if (
-          needsFocusedImplementation() &&
-          observed.size === 0 &&
-          availableNames.has('read_files')
-        ) {
-          const starterPaths = [
-            'src/App.tsx',
-            'src/App.css',
-            'src/main.tsx',
-            'src/index.css',
-            'package.json',
-            'vite.config.ts',
-          ];
+        if (recoveryReadPaths && availableNames.has('read_files')) {
           answer.content = '';
           answer.tool_calls = [
             {
               function: {
                 name: 'read_files',
-                arguments: { paths: starterPaths, limit: 4000 },
+                arguments: { paths: recoveryReadPaths, limit: 4000 },
               },
             },
           ];
+          recoveryReadPaths = undefined;
+        } else if (
+          needsFocusedImplementation() &&
+          !inspectedScaffold &&
+          availableNames.has('read_files')
+        ) {
+          inspectedScaffold = true;
+          const scan = await scanFiles(root, 10000, signal);
+          const paths = scaffoldSourcePaths(scan.files);
+          if (paths.length) {
+            answer.content = '';
+            answer.tool_calls = [
+              { function: { name: 'read_files', arguments: { paths, limit: 4000 } } },
+            ];
+          }
         }
         if (
           needsFocusedImplementation() &&
@@ -2191,7 +2332,12 @@ export class Agent {
         ]);
         if (
           requiresScaffoldFirst &&
-          answer.tool_calls?.some((call) => invalidBeforeScaffold.has(call.function.name))
+          answer.tool_calls?.some(
+            (call) =>
+              invalidBeforeScaffold.has(call.function.name) ||
+              (call.function.name === 'scaffold_project' &&
+                call.function.arguments.template !== requestedScaffold),
+          )
         ) {
           answer.content = '';
           answer.tool_calls = [
@@ -2428,6 +2574,29 @@ export class Agent {
             continue;
           }
           finishWithCurrentWork = true;
+        }
+        if (
+          !answer.tool_calls?.length &&
+          browserChecksRequested &&
+          !this.actionDeclined &&
+          !successfulReceipt('browser_assert') &&
+          !successfulReceipt('browser_scenario')
+        ) {
+          delete this.store.value.activeRun!.stream;
+          if (browserEvidenceRetries++ >= 2) {
+            await add(
+              'assistant',
+              'I opened the local preview but did not complete the requested browser checks. See Browser Snapshot for what the page actually showed.',
+            );
+            task.outcome = 'failed';
+            break;
+          }
+          messages.push({
+            role: 'system',
+            content:
+              'Continue from the actual browser snapshot. Use interactions and assertions that match the requested steps, or assert that a required control is absent. Report only observed results.',
+          });
+          continue;
         }
         if (
           !answer.tool_calls?.length &&
@@ -2906,6 +3075,12 @@ export class Agent {
                 : 'Browser access was declined.';
             } else if (name === 'browser_snapshot') {
               result = JSON.stringify(await browserSnapshot());
+            } else if (name === 'browser_verify_gallery') {
+              if (!verifyGalleryRequested || !successfulReceipt('browser_open'))
+                throw new Error(
+                  'Request the gallery search and clipboard check and approve opening the local preview first.',
+                );
+              result = JSON.stringify(await verifyEmojiGallery(signal));
             } else if (name === 'browser_click') {
               const args = schemas.browser_click.parse(call.function.arguments);
               result = JSON.stringify(await browserClick(args.selector));
@@ -2947,7 +3122,12 @@ export class Agent {
             } else if (name === 'browser_scenario') {
               const args = schemas.browser_scenario.parse(call.function.arguments);
               result = JSON.stringify(
-                await browserScenario(this.store.directory, root, args, signal),
+                await browserScenario(
+                  this.store.directory,
+                  root,
+                  standalonePreview ? { ...args, save: false } : args,
+                  signal,
+                ),
               );
             } else if (name === 'git_status' || name === 'git_diff' || name === 'git_log') {
               const args =
@@ -3093,12 +3273,23 @@ export class Agent {
             } else if (name === 'read_files') {
               const args = schemas.read_files.parse(call.function.arguments);
               const ranges = [];
+              const missing: string[] = [];
               let totalReturned = 0;
               for (const filename of args.paths) {
                 signal.throwIfAborted();
                 const remaining = Math.max(0, 24000 - totalReturned);
                 if (!remaining) break;
-                const range = await readRange(root, filename, 0, Math.min(args.limit, remaining));
+                const range = await readRange(
+                  root,
+                  filename,
+                  0,
+                  Math.min(args.limit, remaining),
+                ).catch((error: unknown) => {
+                  if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+                  missing.push(filename);
+                  return undefined;
+                });
+                if (!range) continue;
                 totalReturned += range.content.length;
                 observed.set(path.normalize(filename), {
                   hash: range.hash,
@@ -3106,8 +3297,18 @@ export class Agent {
                 });
                 ranges.push(range);
               }
+              if (!ranges.length && missing.length)
+                throw Object.assign(new Error('None of the requested files exist.'), {
+                  code: 'ENOENT',
+                });
               result = JSON.stringify({
                 files: ranges,
+                ...(missing.length
+                  ? {
+                      missing,
+                      next: 'Use the files that were found or list the project to find other paths.',
+                    }
+                  : {}),
                 requested: args.paths.length,
                 returned: ranges.length,
                 responseComplete: ranges.length === args.paths.length,
@@ -3389,6 +3590,23 @@ export class Agent {
             if (error instanceof ProductPolicyError && !(error instanceof ArtifactFormatError))
               throw error;
             result = `Tool error: ${(error as Error).message}`;
+            if (
+              ['read_file', 'read_files'].includes(name) &&
+              (error as NodeJS.ErrnoException).code === 'ENOENT'
+            ) {
+              const scan = await scanFiles(root, 10000, signal);
+              const paths = scaffoldSourcePaths(scan.files);
+              if (++missingReadCount === 1) {
+                recoveryReadPaths = paths.filter((filename) => !observed.get(filename)?.full);
+                if (recoveryReadPaths.length && enabledNames.has('read_files')) {
+                  nextPassTools = new Set(['read_files']);
+                  nextPassRequiresTool = true;
+                } else {
+                  recoveryReadPaths = undefined;
+                }
+              }
+              result = `Tool error: Requested source file not found. Available project files: ${JSON.stringify(paths)}. Use the actual entry point. If the project has no page, explain the missing prerequisite or create the requested page using the existing stack when possible.`;
+            }
             if (error instanceof z.ZodError) {
               // Repair malformed native calls with the same schema on the next pass.
               // Otherwise the model sees every tool again and can repeat the omission.
@@ -3455,7 +3673,51 @@ export class Agent {
               }
             }
           }
+          if (name === 'browser_verify_gallery' && !result.startsWith('Tool error:')) {
+            const receipt = JSON.parse(result) as Awaited<ReturnType<typeof verifyEmojiGallery>>;
+            task.outcome = receipt.passed ? 'completed_unverified' : 'failed';
+            await add(
+              'assistant',
+              receipt.passed
+                ? `Browser check passed. Search narrowed ${receipt.search.initial} items to ${receipt.search.matched}, returned no matches for an unknown query, and restored all items after clearing. The clipboard matched ${receipt.copies.length} displayed emoji after clicking them.`
+                : 'The browser check found a search or clipboard mismatch. See the gallery verification result for the failed step.',
+            );
+            break;
+          }
+          if (
+            standalonePreview &&
+            previewTools?.has(name) &&
+            (result.startsWith('Tool error:') || this.actionDeclined)
+          ) {
+            task.outcome = 'failed';
+            await add(
+              'assistant',
+              this.actionDeclined
+                ? 'The local browser check stopped because preview access or server startup was declined.'
+                : `I could not start the local browser check. ${result.replace(/^Tool error: /, '')}`,
+            );
+            break;
+          }
+          if (result.startsWith('Tool error: Requested source file not found.')) {
+            if (missingReadCount >= 3) {
+              task.outcome = 'failed';
+              await add(
+                'assistant',
+                'I could not locate the requested source file. Open the project that contains the page and resend the request. If you are starting from scratch, ask Forge to create the page in a new project.',
+              );
+              break;
+            }
+            continue;
+          }
           const failure = failureGuard.observe(name, result, task.fingerprint);
+          if (failure?.repeated && standalonePreview) {
+            task.outcome = 'failed';
+            await add(
+              'assistant',
+              'The local browser step kept failing. See the last browser result for the failing action.',
+            );
+            break;
+          }
           if (failure?.repeated) {
             this.store.journal('repeated-tool-failure', failure, task.runId);
             const choice = await this.clarify({
@@ -3504,7 +3766,12 @@ export class Agent {
             break;
           }
         }
-        if (finishWithCurrentWork) break;
+        if (
+          finishWithCurrentWork ||
+          task.outcome === 'failed' ||
+          (verifyGalleryRequested && successfulReceipt('browser_verify_gallery'))
+        )
+          break;
         const requiredChecksPassed =
           implementationSatisfied() && completionEvidence(task).checksSatisfied;
         if (requiredChecksPassed && !previewNextTools()) {

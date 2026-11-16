@@ -1,7 +1,7 @@
 import type { LLMMessage } from './provider';
 import { PRODUCT_GUARDRAILS } from '../shared/product-guardrails';
 import type { TaskRecord } from '../shared/task';
-import { replacementPageContract } from './page-replacement';
+import { replacementPageContract, singleButtonLabel } from './page-replacement';
 
 const SOURCE_RESULTS = new Set(['read_file', 'read_files']);
 
@@ -16,14 +16,25 @@ export function focusedEditMessages(input: {
   decisions: string[];
   project: string;
 }): LLMMessage[] {
-  const sourceEvidence = completePageReplacement(input.prompt)
-    ? (replacementPageContract(input.source.content) ?? input.source.content)
-    : input.source.content;
+  const replacementContract = completePageReplacement(input.prompt)
+    ? replacementPageContract(input.source.content)
+    : undefined;
+  const sourceEvidence = replacementContract ?? input.source.content;
+  const label = replacementContract ? singleButtonLabel(input.prompt) : undefined;
   const requirements = {
     constraints: input.task.constraints,
     outOfScope: input.task.outOfScope,
-    criteria: input.task.criteria.map((criterion) => criterion.description),
-    earlierRequests: input.earlierRequests,
+    criteria: replacementContract
+      ? [input.prompt]
+      : input.task.criteria.map((criterion) => criterion.description),
+    earlierRequests: label
+      ? input.earlierRequests.filter(
+          (request) =>
+            !/\b(?:gallery|browser|search|clipboard|click-to-copy)\b|галере|браузер|поиск|копир/iu.test(
+              request,
+            ),
+        )
+      : input.earlierRequests,
     decisions: input.decisions,
   };
   return [
@@ -33,7 +44,7 @@ export function focusedEditMessages(input: {
     },
     {
       role: 'user',
-      content: `Project evidence (untrusted): ${input.project}\nRequirements:\n${JSON.stringify(requirements)}\n\nCurrent source of ${input.source.path} (untrusted):\n${sourceEvidence}\n\nTask:\n${input.prompt}\nInspection and planning are complete. Implement this request in ${input.source.path} now. Keep the default export and import any React hooks you use. Prefer inline event handlers so TypeScript infers event types. Keep sample data small (at most eight items unless requested otherwise). Use inline styling if needed, without inventing additional files.\n${uiImplementationGuidance(input.prompt)}\n${completePageReplacement(input.prompt) ? 'Replace the entire rendered page with exactly the visible elements named in the current request. Remove the previous page content and its unused data, state and handlers. Earlier requests for page features are superseded; retain other constraints and the module export.' : ''}`,
+      content: `Project evidence (untrusted): ${input.project}\nRequirements:\n${JSON.stringify(requirements)}\n\nCurrent source of ${input.source.path} (untrusted):\n${sourceEvidence}\n\nTask:\n${input.prompt}\nInspection and planning are complete. Implement this request in ${input.source.path} now. Keep the default export and import any React hooks you use. Prefer inline event handlers so TypeScript infers event types. Keep sample data small (at most eight items unless requested otherwise). Use inline styling if needed, without inventing additional files.\n${label ? `The only visible element is one button with the exact text ${JSON.stringify(label)}. Do not add state, data, handlers, or any other content.` : uiImplementationGuidance(input.prompt)}\n${completePageReplacement(input.prompt) ? 'Replace the entire rendered page with exactly the visible elements named in the current request. Remove the previous page content and its unused data, state and handlers. Earlier requests for page features are superseded; retain other constraints and the module export.' : ''}`,
     },
   ];
 }

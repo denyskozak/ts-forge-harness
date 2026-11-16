@@ -5,13 +5,17 @@ import { once } from 'node:events';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Agent } from '../electron/agent';
+import { Agent, scaffoldTemplateForPrompt } from '../electron/agent';
 import { Store } from '../electron/store';
 
 const prompts = [
   'Build a simple emoji gallery with search and click-to-copy. Use the project’s existing stack; no API or new packages. Inspect the project and propose a short plan first.',
   'Remove all existing elements from the page and leave only a single button with the text "Hello World".',
 ];
+test('no API is a gallery constraint, not a request for an API template', () => {
+  assert.equal(scaffoldTemplateForPrompt(prompts[0]), 'react');
+  assert.equal(scaffoldTemplateForPrompt('Build a simple Hono API'), 'api');
+});
 for (const prompt of prompts) {
   test(`a mistaken JavaScript edit recovers for: ${prompt}`, async (t) => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'forge-simple-recovery-'));
@@ -180,4 +184,66 @@ test('small React page edits have a concrete target without guessing in larger p
     undefined,
   );
   assert.equal(simpleReactEditTarget('Build a simple API', ['App.tsx'], ['React']), undefined);
+});
+
+test('a missing React path triggers discovery in a Hono project without asking the user', async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'forge-missing-page-'));
+  const project = path.join(directory, 'project');
+  await fs.mkdir(path.join(project, 'src'), { recursive: true });
+  await fs.writeFile(
+    path.join(project, 'package.json'),
+    JSON.stringify({ dependencies: { hono: '^4.0.0' } }),
+  );
+  await fs.writeFile(path.join(project, 'src/index.ts'), 'export const entry = "Hono starter";');
+
+  const server = createServer(async (req, res) => {
+    if (req.url === '/api/tags')
+      return res.end(JSON.stringify({ models: [{ name: 'local', size: 1 }] }));
+    if (req.url === '/api/show') return res.end('{}');
+    for await (const _chunk of req) {
+      // Consume the request body before replying.
+    }
+    res.end(
+      JSON.stringify({
+        done: true,
+        message: {
+          content: '',
+          tool_calls: [{ function: { name: 'read_files', arguments: { paths: ['src/App.tsx'] } } }],
+        },
+      }) + '\n',
+    );
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const store = new Store(path.join(directory, 'state'));
+  t.after(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await store.close();
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+  await store.load();
+  store.value.workspacePath = project;
+  store.value.settings = {
+    ...store.value.settings,
+    model: 'local',
+    endpoint: `http://127.0.0.1:${(server.address() as { port: number }).port}`,
+  };
+  let clarifications = 0;
+  const agent = new Agent(store, (event) => {
+    if (event.type === 'clarification') {
+      clarifications++;
+      agent.stop();
+    }
+  });
+  await agent.run('Inspect the project and summarize its TypeScript entry point.');
+  const session = store.value.sessions[0];
+  assert.equal(clarifications, 0);
+  assert.ok(
+    session.messages.some(
+      (message) => message.name === 'read_files' && message.content.includes('Hono starter'),
+    ),
+    'the harness should read the discovered entry point even when the model repeats the bad path',
+  );
+  assert.equal(session.task?.outcome, 'failed');
 });

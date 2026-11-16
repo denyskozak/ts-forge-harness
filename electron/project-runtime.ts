@@ -984,3 +984,122 @@ export function showInteractiveBrowser() {
   interactiveWindow!.show();
   interactiveWindow!.focus();
 }
+
+/** Exercise observable gallery behavior in the same isolated preview used by the other browser tools. */
+export async function verifyEmojiGallery(signal: AbortSignal) {
+  const items = (snapshot: Awaited<ReturnType<typeof browserSnapshot>>) =>
+    (
+      snapshot.elements as {
+        tag: string;
+        role?: string;
+        name?: string;
+        selector: string;
+        visible: boolean;
+      }[]
+    )
+      .filter(
+        (element) => element.visible && (element.tag === 'button' || element.role === 'button'),
+      )
+      .flatMap((element) => {
+        const name = element.name ?? '';
+        const glyph = name.match(
+          /\p{Extended_Pictographic}[\p{Emoji_Modifier}\uFE0F]*(?:\u200D\p{Extended_Pictographic}[\p{Emoji_Modifier}\uFE0F]*)*/u,
+        )?.[0];
+        const term = name
+          .match(/[\p{L}]{3,}/gu)
+          ?.find((word) => !/^(?:copy|emoji|clipboard)$/iu.test(word));
+        return glyph && /\p{Emoji}/u.test(glyph) ? [{ ...element, glyph, term }] : [];
+      });
+  const initial = await browserSnapshot();
+  const input = (
+    initial.elements as { tag: string; selector: string; value?: string; visible: boolean }[]
+  ).filter((element) => element.visible && element.tag === 'input');
+  if (input.length !== 1) throw new Error('Expected one visible gallery search field.');
+  const { selector, value = '' } = input[0];
+  const all = items(await browserFill(selector, ''));
+  const sample = all.find((item) => item.term);
+  if (!sample?.term || new Set(all.map((item) => item.glyph)).size < 3)
+    throw new Error('Expected at least three distinct visible emoji and a searchable name.');
+  const query = sample.term.toUpperCase();
+  const page = activePage();
+  const debuggerSession = page.debugger;
+  const session = page.session;
+  const origin = new URL(localPreviewUrl(initial.url)).origin;
+  const isPreviewOrigin = (url: string) => {
+    try {
+      return new URL(url).origin === origin;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    signal.throwIfAborted();
+    const matches = items(await browserFill(selector, query));
+    const noMatches = items(await browserFill(selector, 'forge-no-match-z74199')).length;
+    const restored = items(await browserFill(selector, ''));
+    const search = {
+      query,
+      initial: all.length,
+      matched: matches.length,
+      noMatches,
+      restored: restored.length,
+      passed:
+        matches.some((item) => item.glyph === sample.glyph) &&
+        matches.length < all.length &&
+        noMatches === 0 &&
+        restored.length === all.length,
+    };
+    const { clipboard } = await import('electron');
+    // Allow only sanitized clipboard writes from the top frame of the approved local
+    // preview for the duration of this check. The page cannot read the clipboard.
+    session.setPermissionRequestHandler((contents, permission, allow, details) =>
+      allow(
+        contents === page &&
+          permission === 'clipboard-sanitized-write' &&
+          details.isMainFrame &&
+          isPreviewOrigin(details.requestingUrl),
+      ),
+    );
+    session.setPermissionCheckHandler(
+      (contents, permission, requestingOrigin, details) =>
+        contents === page &&
+        permission === 'clipboard-sanitized-write' &&
+        details.isMainFrame &&
+        isPreviewOrigin(requestingOrigin),
+    );
+    await debuggerSession.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+    const copies = [];
+    const tested = new Set<string>();
+    for (const item of [...restored, ...restored.slice(0, 1)]) {
+      if (tested.has(item.glyph)) continue;
+      if ((await clipboard.readText()) === item.glyph) continue;
+      tested.add(item.glyph);
+      signal.throwIfAborted();
+      await browserClick(item.selector);
+      const deadline = Date.now() + 1500;
+      let passed = (await clipboard.readText()) === item.glyph;
+      while (!passed && Date.now() < deadline) {
+        signal.throwIfAborted();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        passed = (await clipboard.readText()) === item.glyph;
+      }
+      copies.push({ emoji: item.glyph, passed });
+      if (copies.length === 3) break;
+    }
+    return {
+      search,
+      copies,
+      passed: search.passed && copies.length === 3 && copies.every((copy) => copy.passed),
+      ...(copies.some((copy) => !copy.passed)
+        ? { console: (await browserSnapshot()).console }
+        : {}),
+    };
+  } finally {
+    session.setPermissionCheckHandler(null);
+    session.setPermissionRequestHandler((_contents, _permission, allow) => allow(false));
+    await debuggerSession
+      .sendCommand('Emulation.setFocusEmulationEnabled', { enabled: false })
+      .catch(() => {});
+    await browserFill(selector, value).catch(() => {});
+  }
+}

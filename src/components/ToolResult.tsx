@@ -372,6 +372,34 @@ export function presentToolResult(message: Message): Presentation {
       ].filter(Boolean),
     };
   }
+  if (name === 'browser_verify_gallery') {
+    const passed = value.passed === true;
+    const search = value.search as Data | undefined;
+    const copies = Array.isArray(value.copies) ? (value.copies as Data[]) : [];
+    return {
+      ...base,
+      title: passed ? 'Gallery check passed' : 'Gallery check failed',
+      summary: 'Search and clipboard',
+      tone: passed ? 'success' : 'danger',
+      icon: passed ? <CheckCircle2 size={15} /> : <XCircle size={15} />,
+      metrics: [
+        search
+          ? `Search: ${asText(search.initial)} → ${asText(search.matched)} → ${asText(search.restored)}`
+          : '',
+        copies.length
+          ? `Clipboard: ${copies.filter((copy) => copy.passed === true).length}/${copies.length}`
+          : '',
+      ].filter(Boolean),
+      failures: [
+        ...(search?.passed === false
+          ? ['Search results did not match the expected filter and reset.']
+          : []),
+        ...copies
+          .filter((copy) => copy.passed === false)
+          .map((copy) => `Clipboard did not match ${asText(copy.emoji)} after clicking.`),
+      ],
+    };
+  }
   if (name === 'browser_scenario') {
     const passed = value.passed === true;
     return {
